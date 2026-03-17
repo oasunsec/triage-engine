@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "triage-engine"
+version = "3.0.0"
+description = "Windows endpoint investigation platform for EVTX triage, detection, correlation, analyst review, and HTML case reporting."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "python-evtx>=0.7.4",
+]
+
+[project.optional-dependencies]
+live = ["pywin32>=306"]
+sigma = ["PyYAML>=6.0"]
+server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7"]
+
+[project.scripts]
+triage = "triage_engine.cli:main"
+
+[tool.setuptools]
+packages = ["triage_engine", "models", "parser", "detectors", "correlation", "reporting"]

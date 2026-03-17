@@ -1,0 +1,17 @@
+title: Sigma Encoded PowerShell Command
+id: triage-sigma-encoded-powershell
+status: experimental
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+detection:
+  selection_event:
+    EventID: 1
+  selection_image:
+    Image|endswith: powershell.exe
+  selection_cmd:
+    CommandLine|contains:
+      - -enc
+      - -encodedcommand
+  condition: selection_event and selection_image and selection_cmd

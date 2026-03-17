@@ -1,0 +1,73 @@
+{
+  "name": "untouched-wave-1",
+  "triage": {
+    "cases_dir": "./cases",
+    "enable_sigma": false,
+    "no_fp_filter": false,
+    "tuning_paths": [
+      "./config/tuning/local.example.json"
+    ],
+    "sigma_rules": [],
+    "extra_args": []
+  },
+  "hayabusa": {
+    "executable": "C:/Tools/hayabusa/hayabusa.exe",
+    "cwd": "C:/Tools/hayabusa",
+    "arguments": [
+      "csv-timeline",
+      "-f",
+      "{input}",
+      "-o",
+      "{output}",
+      "--no-wizard"
+    ],
+    "output_ext": ".csv"
+  },
+  "samples": [
+    {
+      "id": "bits_openvpn_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Command and Control/bits_openvpn.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "Known quiet sample after BITS tuning.",
+      "tags": [
+        "benign",
+        "bits"
+      ]
+    },
+    {
+      "id": "dsrm_password_change",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/4794_DSRM_password_change_t1098.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "persistence"
+      ]
+    },
+    {
+      "id": "lsass_mimikatz_sekurlsa",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/sysmon_10_lsass_mimikatz_sekurlsa_logonpasswords.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "lsass"
+      ]
+    },
+    {
+      "id": "dcsync_4662",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/CA_DCSync_4662.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "dcsync"
+      ]
+    }
+  ]
+}

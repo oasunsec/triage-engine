@@ -1,0 +1,14 @@
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <EventFiltering>
+    <ProcessCreate onmatch="exclude" />
+    <NetworkConnect onmatch="exclude" />
+    <FileCreate onmatch="exclude" />
+    <CreateRemoteThread onmatch="exclude" />
+    <ProcessAccess onmatch="exclude" />
+    <DriverLoad onmatch="exclude">
+      <Signed condition="is">true</Signed>
+      <SignatureStatus condition="is">Valid</SignatureStatus>
+    </DriverLoad>
+  </EventFiltering>
+</Sysmon>

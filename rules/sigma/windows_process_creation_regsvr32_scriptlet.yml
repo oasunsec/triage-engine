@@ -1,0 +1,17 @@
+title: Sigma Regsvr32 Scriptlet Retrieval
+id: triage-sigma-regsvr32-scriptlet
+status: experimental
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1218.010
+detection:
+  selection_event:
+    EventID: 1
+  selection_image:
+    Image|endswith: regsvr32.exe
+  selection_cmd:
+    CommandLine|contains:
+      - scrobj.dll
+      - /i:http
+  condition: selection_event and selection_image and selection_cmd

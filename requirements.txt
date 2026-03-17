@@ -1,0 +1,15 @@
+# Triage Engine — Dependencies
+
+# Required
+python-evtx>=0.7.4        # EVTX file parsing (offline mode)
+
+# Optional — Live mode (Windows only)
+# pywin32>=306             # Windows Event Log API (pip install pywin32)
+
+# Optional — Sigma rule support
+# PyYAML>=6.0              # Sigma YAML parsing (pip install PyYAML)
+
+# Optional — Web dashboard and REST API
+# fastapi>=0.110           # API framework (pip install ".[server]")
+# uvicorn>=0.27            # ASGI server
+# python-multipart>=0.0.7  # File upload support

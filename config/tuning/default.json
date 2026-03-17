@@ -1,0 +1,24 @@
+{
+  "allowlists": {
+    "hosts": [],
+    "users": [],
+    "processes": [],
+    "services": [],
+    "tasks": [],
+    "ips": []
+  },
+  "rule_suppressions": [],
+  "promotion_overrides": {
+    "standalone": [
+      "AdminSDHolder Rights Obfuscation",
+      "Group Policy Object Modified",
+      "Hosts File Modified",
+      "OpenSSH Server Listening",
+      "Remote SAMR Password Reset",
+      "Repeated RDP Authentication Accepted",
+      "System Security Access Granted"
+    ],
+    "correlate": [],
+    "signal_only": []
+  }
+}
