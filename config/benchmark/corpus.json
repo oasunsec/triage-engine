@@ -1,0 +1,262 @@
+{
+  "name": "untouched-wave-2",
+  "triage": {
+    "cases_dir": "./cases",
+    "enable_sigma": false,
+    "no_fp_filter": false,
+    "tuning_paths": [
+      "./config/tuning/local.example.json"
+    ],
+    "sigma_rules": [],
+    "extra_args": []
+  },
+  "hayabusa": {
+    "executable": "C:/Tools/hayabusa/hayabusa.exe",
+    "cwd": "C:/Tools/hayabusa",
+    "arguments": [
+      "csv-timeline",
+      "-f",
+      "{input}",
+      "-o",
+      "{output}",
+      "--no-wizard"
+    ],
+    "output_ext": ".csv"
+  },
+  "samples": [
+    {
+      "id": "bits_openvpn_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Command and Control/bits_openvpn.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "Known quiet sample after BITS tuning.",
+      "tags": [
+        "benign",
+        "bits"
+      ]
+    },
+    {
+      "id": "rdp_client_timezone_104_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/DFIR_RDP_Client_TimeZone_RdpCoreTs_104_example.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "DFIR client-side RDP timezone event trace used as benign control.",
+      "tags": [
+        "benign",
+        "rdp",
+        "dfir"
+      ]
+    },
+    {
+      "id": "dsrm_password_change",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/4794_DSRM_password_change_t1098.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "persistence"
+      ]
+    },
+    {
+      "id": "lsass_mimikatz_sekurlsa",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/sysmon_10_lsass_mimikatz_sekurlsa_logonpasswords.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "lsass"
+      ]
+    },
+    {
+      "id": "dcsync_4662",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Credential Access/CA_DCSync_4662.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "credential_access",
+        "dcsync"
+      ]
+    },
+    {
+      "id": "discovery_bloodhound",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Discovery/discovery_bloodhound.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "discovery",
+        "bloodhound"
+      ]
+    },
+    {
+      "id": "execution_ftp",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Execution/exec_sysmon_1_ftp.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "execution",
+        "lolbin"
+      ]
+    },
+    {
+      "id": "lateral_remote_service_7045",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/LM_Remote_Service02_7045.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": [
+        "lateral_movement",
+        "service_install"
+      ]
+    },
+    {
+      "id": "atomic_windefender_events_watch",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/AutomatedTestingTools/WinDefender_Events_1117_1116_AtomicRedTeam.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "Windows Defender 1116 telemetry now promoted to strict malicious expectation.",
+      "tags": [
+        "watchlist",
+        "defender",
+        "atomic"
+      ]
+    },
+    {
+      "id": "privesc_krbrelayup_watch",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Privilege Escalation/privesc_KrbRelayUp_windows_4624.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "KrbRelayUp loopback Kerberos administrator-logon behavior now promoted to strict malicious expectation.",
+      "tags": [
+        "watchlist",
+        "privilege_escalation",
+        "krbrelayup"
+      ]
+    },
+    {
+      "id": "defense_execpolicy_changed_watch",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Defense Evasion/de_powershell_execpolicy_changed_sysmon_13.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "PowerShell execution-policy tamper detection promoted to strict malicious expectation.",
+      "tags": [
+        "watchlist",
+        "defense_evasion",
+        "powershell"
+      ]
+    },
+    {
+      "id": "defense_eventlog_7036_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Defense Evasion/DE_WinEventLogSvc_Crash_System_7036.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "System 7036 EventLog service transition sample retained as strict benign control.",
+      "tags": [
+        "benign",
+        "defense_evasion",
+        "eventlog"
+      ]
+    },
+    {
+      "id": "defense_eventlog_crash",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Defense Evasion/DE_EventLog_Service_Crashed.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "Event Log crash activity promoted to strict malicious expectation.",
+      "tags": [
+        "defense_evasion",
+        "eventlog",
+        "service_crash"
+      ]
+    },
+    {
+      "id": "lateral_dcom_failed_10016_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/LM_dcom_shwnd_shbrwnd_mmc20_failed_traces_system_10016.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "Failed DCOM activation traces (System 10016) retained as strict benign control.",
+      "tags": [
+        "benign",
+        "lateral_movement",
+        "dcom"
+      ]
+    },
+    {
+      "id": "defense_remote_eventlog_crash",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Defense Evasion/DE_remote_eventlog_svc_crash_byt3bl33d3r_sysmon_17_1_3.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "Remote Event Log crash behavior promoted to strict malicious expectation.",
+      "tags": [
+        "defense_evasion",
+        "eventlog",
+        "remote_crash"
+      ]
+    },
+    {
+      "id": "lateral_dfir_rdpsharp_168_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/dfir_rdpsharp_target_RdpCoreTs_168_68_131.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "DFIR RdpCoreTs 168/68/131 trace remains a strict benign control in tuned runs.",
+      "tags": [
+        "benign",
+        "lateral_movement",
+        "dfir"
+      ]
+    },
+    {
+      "id": "lateral_mssql_xp_cmdshell_events",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/LM_xp_cmdshell_MSSQL_Events.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "MSSQL xp_cmdshell execution sequence promoted to strict malicious expectation.",
+      "tags": [
+        "lateral_movement",
+        "mssql",
+        "xp_cmdshell"
+      ]
+    },
+    {
+      "id": "lateral_winrm_poorlog_benign",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/LM_winrm_target_wrmlogs_91_wsmanShellStarted_poorLog.evtx",
+      "expected": "benign",
+      "expected_max_incidents": 0,
+      "expected_max_findings": 0,
+      "notes": "Sparse WinRM poor-log target trace remains strict benign control under tuned filtering.",
+      "tags": [
+        "benign",
+        "lateral_movement",
+        "winrm"
+      ]
+    },
+    {
+      "id": "lateral_mssql_xp_cmdshell_attempt",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/MSSQL_15281_xp_cmdshell_exec_failed_attempt.evtx",
+      "expected": "malicious",
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "MSSQL xp_cmdshell failed-attempt activity promoted to strict malicious expectation.",
+      "tags": [
+        "lateral_movement",
+        "mssql",
+        "xp_cmdshell_attempt"
+      ]
+    }
+  ]
+}

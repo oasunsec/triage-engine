@@ -1,0 +1,38 @@
+{
+  "allowlists": {
+    "hosts": [
+      "LAB-DC-01"
+    ],
+    "users": [
+      "CORP\\PatchService"
+    ],
+    "processes": [
+      "C:\\Program Files\\CorpAgent\\agent.exe"
+    ],
+    "services": [
+      "CorpAgentUpdater"
+    ],
+    "tasks": [
+      "\\Corp\\DailyInventory"
+    ],
+    "ips": [
+      "10.10.10.10"
+    ]
+  },
+  "rule_suppressions": [
+    {
+      "rule": "Scheduled Task Configuration Discovery",
+      "host": "LAB-DC-01",
+      "reason": "approved_inventory_task_audit"
+    }
+  ],
+  "promotion_overrides": {
+    "standalone": [
+      "Audit Log Cleared"
+    ],
+    "correlate": [
+      "Credential File Access"
+    ],
+    "signal_only": []
+  }
+}

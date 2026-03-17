@@ -1,0 +1,17 @@
+title: Sigma MSHTA Remote URL Execution
+id: triage-sigma-mshta-remote-url
+status: experimental
+level: high
+tags:
+  - attack.execution
+  - attack.t1218.005
+detection:
+  selection_event:
+    EventID: 1
+  selection_image:
+    Image|endswith: mshta.exe
+  selection_cmd:
+    CommandLine|contains:
+      - http://
+      - https://
+  condition: selection_event and selection_image and selection_cmd

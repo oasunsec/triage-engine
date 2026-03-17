@@ -1,0 +1,30 @@
+services:
+  triage-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: triage-engine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./cases:/app/cases
+    environment:
+      TRIAGE_RUNTIME_MODE: "docker"
+      TRIAGE_HOST: "0.0.0.0"
+      TRIAGE_PORT: "8000"
+      TRIAGE_DATA_DIR: "/app/data"
+      TRIAGE_CASES_DIR: "/app/cases"
+      TRIAGE_MAX_UPLOAD_MB: "500"
+      TRIAGE_CORS_ORIGINS: "localhost"
+      TRIAGE_INVESTIGATION_TIMEOUT_SECONDS: "1800"
+      TRIAGE_DETECTOR_TIMEOUT_SECONDS: "30"
+      TRIAGE_QUEUE_SYNC_INTERVAL_SECONDS: "30"
+      TRIAGE_SESSION_TTL_HOURS: "12"
+      TRIAGE_SESSION_IDLE_HOURS: "2"
+      TRIAGE_PARSE_EXECUTOR: "serial"
+      TRIAGE_PARSE_WORKERS: "4"
+      TRIAGE_LOG_FILE_ENABLED: "1"
+      TRIAGE_LOG_FILE_PATH: "/app/data/triage-engine.log"
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped

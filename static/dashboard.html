@@ -1,0 +1,3352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Triage Engine</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232735;
+    --surface3: #2a3042;
+    --border: #2d3148;
+    --text: #e4e6f0;
+    --text2: #8b8fa3;
+    --accent: #6c72ff;
+    --accent2: #4e54cc;
+    --accent-soft: rgba(108,114,255,.16);
+    --red: #ff4d6a;
+    --orange: #ff9f43;
+    --green: #26de81;
+    --blue: #45aaf2;
+    --radius: 10px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: "Segoe UI Variable Text", "Bahnschrift", "Segoe UI", system-ui, -apple-system, sans-serif;
+    background:
+      radial-gradient(circle at top right, rgba(108,114,255,.12), transparent 26%),
+      radial-gradient(circle at left center, rgba(69,170,242,.08), transparent 22%),
+      var(--bg);
+    color: var(--text);
+    min-height:100vh;
+    letter-spacing:.01em;
+    color-scheme: dark;
+    transition: background .18s ease, color .18s ease;
+  }
+  body.theme-dark { color-scheme: dark; }
+  body.theme-light {
+    --bg: #eef3fb;
+    --surface: #ffffff;
+    --surface2: #f4f7fd;
+    --surface3: #e9eef9;
+    --border: #d7deee;
+    --text: #182033;
+    --text2: #61708d;
+    --accent: #4958f5;
+    --accent2: #3747d1;
+    --accent-soft: rgba(73,88,245,.12);
+    --red: #d6455d;
+    --orange: #c97822;
+    --green: #168b58;
+    --blue: #1d7ed6;
+    background:
+      radial-gradient(circle at top right, rgba(73,88,245,.12), transparent 26%),
+      radial-gradient(circle at left center, rgba(29,126,214,.08), transparent 22%),
+      linear-gradient(180deg, #f9fbff 0%, #edf2fb 100%);
+    color-scheme: light;
+  }
+  body.theme-light .topbar {
+    background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(244,247,253,.98));
+    box-shadow:0 10px 28px rgba(111,130,167,.12);
+  }
+  body.theme-light .card,
+  body.theme-light .stat,
+  body.theme-light .review-panel,
+  body.theme-light .modal-card,
+  body.theme-light .toast {
+    box-shadow:0 12px 30px rgba(112,130,167,.12);
+  }
+  body.theme-light .card,
+  body.theme-light .stat {
+    background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(247,250,255,.98));
+  }
+  body.theme-light .card-soft,
+  body.theme-light .review-panel,
+  body.theme-light .case-status-banner {
+    background:linear-gradient(180deg, rgba(248,250,255,.98), rgba(240,245,254,.98));
+  }
+  body.theme-light .mini-stat,
+  body.theme-light .detail-chip,
+  body.theme-light .toggle-row,
+  body.theme-light .user-row,
+  body.theme-light .audit-item {
+    background:rgba(255,255,255,.82);
+  }
+  body.theme-light .auth-card {
+    background:linear-gradient(180deg, rgba(255,255,255,.98), rgba(243,247,255,.98));
+    border-color:rgba(73,88,245,.24);
+    box-shadow:0 24px 70px rgba(76,94,140,.22);
+  }
+  body.theme-light .auth-overlay,
+  body.theme-light .modal-shell {
+    background:rgba(229,236,247,.68);
+  }
+  body.theme-light .template-chip,
+  body.theme-light .audit-chip {
+    color:#3042c9;
+  }
+  body.theme-light tbody tr:nth-child(even) td {
+    background:rgba(73,88,245,.025);
+  }
+  body.theme-light tr:hover td {
+    background:rgba(73,88,245,.08);
+  }
+
+  /* Layout */
+  .shell { display:flex; min-height:100vh; }
+  .sidebar { width:260px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+  .main { flex:1; display:flex; flex-direction:column; overflow:auto; }
+  .topbar { padding:16px 28px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:16px; background:linear-gradient(180deg, rgba(26,29,39,.98), rgba(21,24,34,.98)); box-shadow:0 12px 32px rgba(8,10,15,.16); }
+  .topbar-actions { display:flex; align-items:center; gap:12px; }
+  .reviewer-shell { display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:14px; background:var(--surface2); }
+  .theme-mode-btn { min-width:112px; }
+  .reviewer-meta { display:flex; flex-direction:column; min-width:120px; }
+  .reviewer-kicker { font-size:10px; text-transform:uppercase; letter-spacing:.7px; color:var(--text2); }
+  .reviewer-name { font-size:13px; font-weight:600; }
+  .topbar-input { background:transparent; border:1px solid var(--border); border-radius:10px; color:var(--text); padding:7px 10px; font-size:13px; min-width:160px; }
+  .topbar-input:focus { outline:none; border-color:var(--accent); }
+  .session-pill { padding:6px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text2); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  .session-pill.role-admin { color:#ffb86c; border-color:rgba(255,184,108,.35); }
+  .session-pill.role-analyst { color:#7ee787; border-color:rgba(126,231,135,.35); }
+  .session-pill.role-viewer { color:#79c0ff; border-color:rgba(121,192,255,.35); }
+  .session-pill.runtime-pill { text-transform:none; letter-spacing:.02em; }
+  .session-pill.runtime-local { color:#79c0ff; border-color:rgba(121,192,255,.35); }
+  .session-pill.runtime-docker { color:#ffb86c; border-color:rgba(255,184,108,.35); }
+  .session-pill.runtime-offline { color:var(--text2); border-color:var(--border); }
+  .content { padding:28px; flex:1; }
+
+  /* Sidebar */
+  .logo { padding:20px; font-size:18px; font-weight:700; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+  .logo .dot { width:10px; height:10px; border-radius:50%; background:var(--accent); }
+  .nav { padding:12px; flex:1; overflow-y:auto; }
+  .nav-item { padding:10px 14px; border-radius:var(--radius); cursor:pointer; margin-bottom:2px; font-size:14px; color:var(--text2); transition: all .15s; display:flex; align-items:center; gap:10px; }
+  .nav-item:hover { background:var(--surface2); color:var(--text); }
+  .nav-item.active { background:var(--accent); color:#fff; }
+  .nav-item.disabled { opacity:.45; pointer-events:none; }
+  .nav-label { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--text2); padding:16px 14px 6px; }
+  .sidebar-footer { padding:14px 12px 16px; border-top:1px solid var(--border); display:grid; gap:8px; }
+  .sidebar-user { padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+  .sidebar-user-name { font-size:13px; font-weight:600; margin-bottom:4px; }
+  .sidebar-user-role { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--text2); }
+
+  /* Cards */
+  .card { background:linear-gradient(180deg, rgba(26,29,39,.98), rgba(22,25,34,.98)); border:1px solid var(--border); border-radius:16px; padding:20px; margin-bottom:16px; box-shadow:0 14px 34px rgba(8,10,15,.14); }
+  .card-title { font-size:12px; color:var(--text2); margin-bottom:12px; text-transform:uppercase; letter-spacing:.9px; font-weight:700; }
+  .card-soft { background:linear-gradient(180deg, rgba(35,39,53,.92), rgba(26,29,39,.97)); }
+  .card-accent { border-color:rgba(108,114,255,.35); box-shadow:0 14px 42px rgba(17,22,35,.28); }
+  .card-danger-soft { border-color:rgba(255,77,106,.28); }
+  .card-warning-soft { border-color:rgba(255,159,67,.28); }
+  .card-success-soft { border-color:rgba(38,222,129,.24); }
+
+  /* Stat grid */
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
+  .stat { background:linear-gradient(180deg, rgba(26,29,39,.98), rgba(23,25,35,.98)); border:1px solid var(--border); border-radius:18px; padding:18px 20px; box-shadow:0 10px 26px rgba(8,10,15,.12); }
+  .stat-value { font-size:30px; font-weight:700; letter-spacing:-.03em; }
+  .stat-label { font-size:13px; color:var(--text2); margin-top:4px; }
+
+  /* Table */
+  .table-scroll { width:100%; overflow-x:auto; border-radius:12px; }
+  .table-scroll table { min-width:760px; }
+  .table-scroll-queue table { min-width:1060px; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th { text-align:left; font-size:11px; color:var(--text2); text-transform:uppercase; letter-spacing:.9px; padding:12px 14px; border-bottom:1px solid var(--border); }
+  td { padding:13px 14px; border-bottom:1px solid rgba(45,49,72,.88); font-size:13.5px; line-height:1.45; }
+  tbody tr:nth-child(even) td { background:rgba(255,255,255,.012); }
+  tr:hover td { background:rgba(108,114,255,.085); }
+  tr { cursor:pointer; }
+  .th-sort-btn { appearance:none; background:transparent; border:none; color:inherit; font:inherit; letter-spacing:inherit; text-transform:inherit; cursor:pointer; padding:0; display:inline-flex; align-items:center; gap:6px; }
+  .th-sort-btn:hover { color:var(--text); }
+  .th-sort-btn.active { color:var(--accent); }
+
+  /* Badges */
+  .badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:12px; font-weight:600; }
+  .badge-completed { background:#26de8122; color:var(--green); }
+  .badge-running { background:#45aaf222; color:var(--blue); }
+  .badge-failed { background:#ff4d6a22; color:var(--red); }
+  .badge-unknown { background:#8b8fa322; color:var(--text2); }
+  .badge-p1 { background:#ff4d6a22; color:var(--red); }
+  .badge-p2 { background:#ff9f4322; color:var(--orange); }
+  .badge-p3 { background:#45aaf222; color:var(--blue); }
+  .badge-p4 { background:#8b8fa322; color:var(--text2); }
+
+  /* Review status badges */
+  .badge-open { background:#45aaf222; color:var(--blue); }
+  .badge-in-review { background:#ff9f4322; color:var(--orange); }
+  .badge-escalated { background:#ff4d6a22; color:var(--red); }
+  .badge-closed { background:#26de8122; color:var(--green); }
+  .badge-suppressed { background:#8b8fa322; color:var(--text2); }
+
+  /* Buttons */
+  .btn { padding:10px 20px; border:none; border-radius:var(--radius); font-size:14px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .btn-primary { background:var(--accent); color:#fff; }
+  .btn-primary:hover { background:var(--accent2); }
+  .btn-sm { padding:6px 14px; font-size:13px; }
+  .btn-danger { background:var(--red); color:#fff; }
+  .btn-danger:hover { opacity:.85; }
+  .btn-ghost { background:transparent; border:1px solid var(--border); color:var(--text2); }
+  .btn-ghost:hover { background:var(--surface2); color:var(--text); }
+
+  /* Forms */
+  .input, select.input { background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 14px; color:var(--text); font-size:14px; width:100%; }
+  .input:focus, select.input:focus { outline:none; border-color:var(--accent); }
+  select.input { appearance:auto; }
+  textarea.input { resize:vertical; min-height:60px; font-family:inherit; }
+  .input-group { margin-bottom:14px; }
+  .input-group label { display:block; font-size:13px; color:var(--text2); margin-bottom:6px; }
+
+  /* Upload zone */
+  .dropzone { border:2px dashed var(--border); border-radius:var(--radius); padding:40px; text-align:center; color:var(--text2); cursor:pointer; transition:all .2s; }
+  .dropzone:hover, .dropzone.dragover { border-color:var(--accent); color:var(--text); background:var(--surface2); }
+  .dropzone input { display:none; }
+
+  /* Progress */
+  .progress-bar { height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; margin-top:8px; }
+  .progress-fill { height:100%; background:var(--accent); border-radius:3px; transition: width .5s; }
+
+  /* Case detail */
+  .detail-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+  .detail-title { font-size:28px; font-weight:750; letter-spacing:-.03em; }
+  .detail-tabs { display:flex; gap:4px; margin-bottom:20px; }
+  .detail-tab { padding:8px 16px; border-radius:var(--radius); cursor:pointer; font-size:14px; color:var(--text2); background:transparent; border:none; }
+  .detail-tab:hover { background:var(--surface2); color:var(--text); }
+  .detail-tab.active { background:var(--accent); color:#fff; }
+  .pre-block { background:var(--surface2); border-radius:var(--radius); padding:16px; font-family:'Cascadia Code',monospace; font-size:13px; white-space:pre-wrap; overflow-x:auto; max-height:600px; overflow-y:auto; line-height:1.5; }
+  .subtle-hint { color:var(--text2); font-size:12px; margin-top:-4px; margin-bottom:12px; line-height:1.45; }
+  .table-link { color:var(--text); text-decoration:none; font-weight:600; }
+  .table-link:hover { color:var(--accent); }
+  .detail-card.focused { border-color:var(--accent); box-shadow:0 0 0 1px rgba(108,114,255,.35); }
+  .table-toolbar { display:flex; gap:12px; align-items:end; justify-content:space-between; flex-wrap:wrap; margin-bottom:14px; }
+  .table-toolbar .toolbar-group { display:flex; gap:10px; align-items:end; flex-wrap:wrap; }
+  .table-toolbar .input-group { margin-bottom:0; min-width:160px; }
+  .toolbar-meta { font-size:12px; color:var(--text2); }
+  .pagination { display:flex; justify-content:space-between; align-items:center; gap:12px; padding-top:14px; flex-wrap:wrap; }
+  .pagination-controls { display:flex; gap:8px; align-items:center; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--surface2); color:var(--text2); font-size:12px; }
+  .empty-state { text-align:center; padding:36px 20px; color:var(--text2); font-size:14px; }
+  .loading-state { text-align:center; padding:26px 20px; color:var(--text2); font-size:13px; }
+  .queue-summary { margin:0 0 12px; color:var(--text2); font-size:12px; }
+  .spinner { width:16px; height:16px; border-radius:50%; border:2px solid rgba(108,114,255,.25); border-top-color:var(--accent); display:inline-block; animation:spin .8s linear infinite; vertical-align:middle; }
+  .loading-inline { display:inline-flex; align-items:center; gap:8px; }
+  .btn.is-loading { opacity:.85; cursor:wait; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .overview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+  .mini-list { list-style:none; display:flex; flex-direction:column; gap:8px; }
+  .mini-list li { color:var(--text2); font-size:13px; line-height:1.45; }
+  .section-kicker { color:var(--text2); font-size:11px; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; }
+  .hero-grid { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; }
+  .hero-copy { display:grid; gap:10px; }
+  .hero-eyebrow { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--text2); }
+  .hero-title { font-size:27px; line-height:1.1; font-weight:760; letter-spacing:-.04em; max-width:14ch; }
+  .hero-text { color:var(--text2); font-size:14px; line-height:1.6; max-width:60ch; }
+  .hero-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:4px; }
+  .hero-pills { display:flex; flex-wrap:wrap; gap:8px; }
+  .mini-stat-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .mini-stat { border:1px solid rgba(45,49,72,.92); border-radius:16px; padding:14px; background:rgba(15,17,23,.34); }
+  .mini-stat-value { font-size:24px; font-weight:760; letter-spacing:-.03em; }
+  .mini-stat-label { color:var(--text2); font-size:12px; margin-top:4px; }
+  .toast-stack { position:fixed; top:22px; right:22px; display:flex; flex-direction:column; gap:10px; z-index:9999; pointer-events:none; }
+  .toast { min-width:260px; max-width:420px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:12px 14px; box-shadow:0 10px 30px rgba(0,0,0,.28); font-size:13px; line-height:1.45; opacity:0; transform:translateY(-6px); transition:all .18s ease; }
+  .toast.show { opacity:1; transform:translateY(0); }
+  .toast-success { border-color:rgba(38,222,129,.35); }
+  .toast-error { border-color:rgba(255,77,106,.35); }
+  .toast-info { border-color:rgba(69,170,242,.35); }
+  .auth-overlay { position:fixed; inset:0; z-index:9500; display:flex; align-items:center; justify-content:center; background:rgba(6,10,20,.78); backdrop-filter:blur(10px); }
+  .auth-card { width:min(460px, calc(100vw - 32px)); background:linear-gradient(180deg, rgba(21,27,43,.98), rgba(17,22,35,.98)); border:1px solid rgba(124,92,255,.28); border-radius:22px; padding:24px; box-shadow:0 24px 80px rgba(0,0,0,.48); }
+  .auth-copy { color:var(--text2); font-size:14px; line-height:1.5; margin-bottom:18px; }
+  .auth-grid { display:grid; gap:12px; }
+  .auth-actions { display:flex; gap:10px; align-items:center; margin-top:16px; }
+  .auth-message { min-height:18px; color:var(--text2); font-size:13px; }
+  .modal-shell { position:fixed; inset:0; z-index:9400; display:flex; align-items:center; justify-content:center; background:rgba(6,10,20,.62); backdrop-filter:blur(8px); }
+  .modal-card { width:min(720px, calc(100vw - 40px)); max-height:min(88vh, 900px); overflow:auto; background:var(--surface); border:1px solid var(--border); border-radius:22px; box-shadow:0 28px 80px rgba(0,0,0,.45); }
+  .modal-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:20px 22px 12px; border-bottom:1px solid var(--border); }
+  .modal-body { padding:20px 22px 22px; display:grid; gap:18px; }
+  .users-list { display:grid; gap:10px; }
+  .user-row { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:12px 14px; border:1px solid var(--border); border-radius:14px; background:var(--surface2); }
+  .user-meta { display:flex; flex-direction:column; gap:3px; }
+  .user-name { font-weight:600; }
+  .user-subtle { color:var(--text2); font-size:12px; }
+  .user-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end; }
+  .inline-select { background:var(--surface); border:1px solid var(--border); border-radius:10px; color:var(--text); padding:7px 10px; font-size:12px; min-width:110px; }
+  .queue-shortcuts { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 14px; }
+  .queue-saved-row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin:0 0 18px; }
+  .queue-saved-row .input-group { min-width:180px; }
+  .detail-overview-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px; }
+  .audit-list { display:grid; gap:10px; }
+  .audit-item { border:1px solid var(--border); border-radius:14px; background:var(--surface2); padding:12px 14px; }
+  .audit-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+  .audit-meta { font-size:12px; color:var(--text2); }
+  .audit-toolbar { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:14px; }
+  .audit-meta-row { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .audit-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:rgba(108,114,255,.12); color:#cfd2ff; font-size:11px; text-transform:uppercase; letter-spacing:.55px; }
+  .prefs-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+  .prefs-actions-row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+  .toggle-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--border); border-radius:14px; background:var(--surface2); }
+  .toggle-row input { width:18px; height:18px; accent-color:var(--accent); }
+  .stale-note { color:var(--orange); font-size:12px; }
+  .account-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+  .section-divider { height:1px; background:var(--border); margin:4px 0; }
+  .detail-fact-table td { vertical-align:top; }
+  .detail-fact-table td:first-child { width:170px; color:var(--text2); }
+  .detail-card-header { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:12px; }
+  .detail-card-copy { display:grid; gap:8px; }
+  .detail-title-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .detail-meta-line { color:var(--text2); font-size:13px; line-height:1.45; }
+  .detail-summary { font-size:14px; line-height:1.6; color:var(--text); }
+  .detail-chip-row { display:flex; flex-wrap:wrap; gap:8px; }
+  .detail-chip { display:inline-flex; align-items:center; gap:6px; border:1px solid rgba(45,49,72,.92); background:rgba(15,17,23,.38); color:var(--text2); border-radius:999px; padding:5px 10px; font-size:12px; }
+  .panel-stack { display:grid; gap:16px; }
+  .case-status-banner { border:1px solid rgba(108,114,255,.2); background:linear-gradient(180deg, rgba(35,39,53,.96), rgba(24,28,39,.98)); border-radius:20px; padding:20px 22px; display:grid; gap:10px; box-shadow:0 16px 36px rgba(7,10,16,.18); }
+  .case-status-banner .banner-title { font-size:20px; font-weight:760; letter-spacing:-.02em; }
+  .case-status-banner .banner-copy { color:var(--text2); font-size:14px; line-height:1.5; }
+  .job-row-stale td { opacity:.88; }
+  .job-row-stale:hover td { background:transparent; }
+  .template-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; border:1px solid rgba(108,114,255,.25); background:var(--accent-soft); color:#d8dcff; font-size:11px; letter-spacing:.5px; text-transform:uppercase; }
+  .history-toolbar { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .history-toolbar .rp-title { margin-bottom:0; }
+  .review-actions .btn-ghost { background:rgba(255,255,255,.02); }
+  .review-actions .btn-primary { box-shadow:0 10px 24px rgba(108,114,255,.22); }
+  body.compact-density .card { padding:16px; }
+  body.compact-density td, body.compact-density th { padding:9px 12px; }
+  body.compact-density .review-panel { padding:14px; }
+  body.compact-density .stat { padding:14px 16px; }
+  .hidden { display:none !important; }
+
+  /* Review panel */
+  .review-panel { background:linear-gradient(180deg, rgba(35,39,53,.94), rgba(27,31,43,.98)); border:1px solid var(--border); border-radius:18px; padding:18px; margin-top:12px; box-shadow:0 14px 34px rgba(10,12,18,.16); }
+  .review-panel-header { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .review-panel-body { display:grid; gap:12px; }
+  .review-panel .rp-title { font-size:12px; color:#cfd2ff; text-transform:uppercase; letter-spacing:.9px; margin-bottom:12px; font-weight:700; }
+  .review-panel-header .rp-title { margin-bottom:0; }
+  .review-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .review-grid .input-group { margin-bottom:8px; }
+  .review-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .review-chip { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600; }
+
+  /* Notes */
+  .note-item { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:10px 14px; margin-bottom:8px; }
+  .note-meta { font-size:11px; color:var(--text2); margin-bottom:4px; }
+  .note-body { font-size:13px; }
+
+  /* History timeline */
+  .history-item { display:flex; gap:10px; padding:8px 0; font-size:13px; border-bottom:1px solid var(--border); line-height:1.5; }
+  .history-item:last-child { border-bottom:none; }
+  .history-time { color:var(--text2); font-size:12px; white-space:nowrap; min-width:140px; }
+
+  /* Queue filters */
+  .queue-filters { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:end; }
+  .queue-filters .input-group { margin-bottom:0; min-width:150px; }
+  .queue-filters select.input { padding:8px 10px; font-size:13px; }
+  .live-health-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:12px; }
+  .health-channel-list { display:grid; gap:8px; margin-top:12px; }
+  .health-channel-row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+  .health-channel-meta { color:var(--text2); font-size:12px; line-height:1.45; text-align:right; max-width:60%; }
+  .health-guidance { margin:12px 0 0; padding-left:18px; color:var(--text2); font-size:13px; }
+  .health-guidance li + li { margin-top:6px; }
+  .health-state-ok { color:var(--green); }
+  .health-state-warn { color:var(--orange); }
+  .health-state-bad { color:var(--red); }
+
+  /* Responsive */
+  @media (max-width:1024px) {
+    .sidebar { width:220px; }
+    .content { padding:22px; }
+    .detail-overview-grid { grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); }
+  }
+  @media (max-width:768px) {
+    .sidebar { display:none; }
+    .stats { grid-template-columns:1fr 1fr; }
+    .review-grid { grid-template-columns:1fr; }
+    .topbar { flex-wrap:wrap; align-items:flex-start; }
+    .topbar-actions { width:100%; justify-content:space-between; }
+    .reviewer-shell { width:100%; flex-wrap:wrap; }
+    .topbar-input { flex:1; min-width:120px; }
+    .queue-saved-row { flex-direction:column; align-items:stretch; }
+    .user-row { flex-direction:column; align-items:flex-start; }
+    .user-actions { width:100%; justify-content:flex-start; }
+    .prefs-grid { grid-template-columns:1fr; }
+    .review-grid { grid-template-columns:1fr; }
+    .detail-tabs { overflow:auto; padding-bottom:4px; }
+    .hero-grid { grid-template-columns:1fr; }
+    .mini-stat-grid { grid-template-columns:1fr 1fr; }
+    .content { padding:18px; }
+    .detail-header { flex-direction:column; align-items:flex-start; gap:12px; }
+    .detail-card-header { flex-direction:column; align-items:flex-start; }
+    .review-panel-header { align-items:flex-start; }
+    .audit-meta-row { align-items:flex-start; }
+    .prefs-actions-row { flex-direction:column; align-items:stretch; }
+    .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .table-scroll table { min-width:700px; }
+    .table-scroll-queue table { min-width:1000px; }
+  }
+  @media (max-width:375px) {
+    .content { padding:14px; }
+    .stats { grid-template-columns:1fr; }
+    .mini-stat-grid { grid-template-columns:1fr; }
+    .topbar { padding:12px 14px; }
+    .btn { width:100%; }
+    .topbar-actions .btn { width:auto; }
+    .review-actions { flex-direction:column; }
+    .review-actions .btn { width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="sidebar">
+    <div class="logo"><span class="dot"></span> Triage Engine</div>
+    <div class="nav">
+      <div class="nav-label">Menu</div>
+      <div class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</div>
+      <div class="nav-item" data-page="queue" onclick="showPage('queue')">Review Queue</div>
+      <div class="nav-item" data-page="investigate" onclick="showPage('investigate')">New Investigation</div>
+      <div class="nav-item" data-page="jobs" onclick="showPage('jobs')">Running Jobs</div>
+    </div>
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="sidebar-user-name" id="sidebar-user-name">Sign in required</div>
+        <div class="sidebar-user-role" id="sidebar-user-role">guest</div>
+      </div>
+      <button class="btn btn-sm btn-ghost hidden" id="btn-sidebar-logout" onclick="logout()">Logout</button>
+    </div>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <div style="font-weight:600" id="page-title">Dashboard</div>
+      <div style="flex:1"></div>
+      <div class="topbar-actions">
+        <div class="reviewer-shell">
+          <div class="reviewer-meta">
+            <div class="reviewer-kicker">Active Session</div>
+            <div class="reviewer-name" id="reviewer-display">Sign in required</div>
+          </div>
+          <div class="session-pill role-viewer" id="session-role-badge">guest</div>
+          <div class="session-pill runtime-pill runtime-offline" id="runtime-badge">Runtime: checking...</div>
+          <button class="btn btn-sm btn-ghost theme-mode-btn" id="btn-cycle-theme" onclick="cycleThemePreference()">Theme: System</button>
+          <button class="btn btn-sm btn-ghost hidden" id="btn-open-preferences" onclick="openPreferencesModal()">Preferences</button>
+          <button class="btn btn-sm btn-ghost hidden" id="btn-manage-users" onclick="openUserAdmin()">Users</button>
+          <button class="btn btn-sm btn-primary" id="btn-auth-entry" onclick="openAuthOverlay()">Sign In</button>
+          <button class="btn btn-sm btn-ghost hidden" id="btn-auth-logout" onclick="logout()">Logout</button>
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--text2)" id="version-badge"></div>
+    </div>
+    <div class="content">
+      <!-- Dashboard page -->
+      <div id="page-dashboard">
+        <div class="stats" id="stats-row"></div>
+        <div class="overview-grid" id="dashboard-focus" style="margin-bottom:24px"></div>
+        <div class="card">
+          <div class="card-title">Cases</div>
+          <div class="table-toolbar">
+            <div class="toolbar-group">
+              <div class="input-group">
+                <label>Search</label>
+                <input class="input" id="cases-search" placeholder="Search case name" oninput="updateCasesView()">
+              </div>
+              <div class="input-group">
+                <label>Sort By</label>
+                <select class="input" id="cases-sort" onchange="updateCasesView()">
+                  <option value="date_desc">Newest first</option>
+                  <option value="date_asc">Oldest first</option>
+                  <option value="priority_asc">Highest priority first</option>
+                  <option value="incidents_desc">Most incidents</option>
+                  <option value="findings_desc">Most findings</option>
+                  <option value="name_asc">Case name A-Z</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label>Rows</label>
+                <select class="input" id="cases-page-size" onchange="changePageSize('cases', this.value)">
+                  <option value="10">10</option>
+                  <option value="15" selected>15</option>
+                  <option value="25">25</option>
+                </select>
+              </div>
+            </div>
+            <div class="toolbar-meta" id="cases-meta"></div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Case</th><th>Status</th><th>Priority</th><th>Signals</th><th>Findings</th><th>Incidents</th><th>Date</th></tr></thead>
+              <tbody id="cases-table"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="cases-pagination"></div>
+        </div>
+      </div>
+
+      <!-- Review Queue page -->
+      <div id="page-queue" style="display:none">
+        <div class="queue-shortcuts">
+          <button class="btn btn-sm btn-ghost" onclick="applyQueueShortcut('mine')">My Queue</button>
+          <button class="btn btn-sm btn-ghost" onclick="applyQueueShortcut('unassigned')">Unassigned</button>
+          <button class="btn btn-sm btn-ghost" onclick="applyQueueShortcut('escalated')">Escalated</button>
+          <button class="btn btn-sm btn-ghost" onclick="applyQueueShortcut('priority')">Priority Cases</button>
+          <button class="btn btn-sm btn-ghost" onclick="clearQueueFilters()">Clear Filters</button>
+        </div>
+        <div class="queue-filters" id="queue-filters">
+          <div class="input-group">
+            <label>Status</label>
+            <select class="input" id="q-status" onchange="syncQueueActionableWithStatus();loadQueue()">
+              <option value="">All</option>
+              <option value="Open">Open</option>
+              <option value="In Review">In Review</option>
+              <option value="Escalated">Escalated</option>
+              <option value="Closed">Closed</option>
+              <option value="Suppressed">Suppressed</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Type</label>
+            <select class="input" id="q-type" onchange="loadQueue()">
+              <option value="">All</option>
+              <option value="finding">Findings</option>
+              <option value="incident">Incidents</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Owner</label>
+            <input class="input" id="q-owner" placeholder="Filter by owner or @unassigned" style="padding:8px 10px;font-size:13px" onchange="loadQueue()">
+          </div>
+          <div class="input-group">
+            <label>Disposition</label>
+            <select class="input" id="q-disposition" onchange="loadQueue()">
+              <option value="">All</option>
+              <option value="True Positive">True Positive</option>
+              <option value="False Positive">False Positive</option>
+              <option value="Benign Expected Activity">Benign Expected</option>
+              <option value="Suspicious - Needs More Investigation">Suspicious</option>
+              <option value="Test / Lab Activity">Test / Lab</option>
+              <option value="Duplicate">Duplicate</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Workflow</label>
+            <label class="toggle-row"><input type="checkbox" id="q-actionable-only" checked onchange="handleQueueActionableToggle()"> <span>Actionable only</span></label>
+          </div>
+        </div>
+        <div class="queue-saved-row">
+          <div class="input-group">
+            <label>Saved Queue Views</label>
+            <select class="input" id="queue-saved-views" onchange="applySavedQueueView(this.value)">
+              <option value="">Choose a saved view</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Save Current View</label>
+            <input class="input" id="queue-view-name" placeholder="e.g. My morning queue">
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end">
+            <button class="btn btn-sm btn-primary" onclick="saveQueueView()">Save View</button>
+            <button class="btn btn-sm btn-ghost" onclick="deleteSavedQueueView()">Delete View</button>
+          </div>
+        </div>
+        <div class="stats" id="queue-stats" style="display:none"></div>
+        <div class="card">
+          <div class="card-title">Review Queue</div>
+          <div class="subtle-hint">Click a row to open the exact finding or incident review panel for that case.</div>
+          <div class="queue-summary" id="queue-filter-summary">Loading queue summary...</div>
+          <div class="table-toolbar">
+            <div class="toolbar-group">
+              <div class="input-group">
+                <label>Sort By</label>
+                <select class="input" id="queue-sort" onchange="updateQueueView()">
+                  <option value="updated_desc">Recently updated</option>
+                  <option value="updated_asc">Oldest updated</option>
+                  <option value="priority_asc">Highest priority first</option>
+                  <option value="priority_desc">Lowest priority first</option>
+                  <option value="case_asc">Case name A-Z</option>
+                  <option value="case_desc">Case name Z-A</option>
+                  <option value="status_asc">Status A-Z</option>
+                  <option value="status_desc">Status Z-A</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label>Rows</label>
+                <select class="input" id="queue-page-size" onchange="changePageSize('queue', this.value)">
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px;align-items:flex-end">
+                <button class="btn btn-sm btn-ghost" onclick="downloadReviewHistoryExport('csv')">History CSV</button>
+                <button class="btn btn-sm btn-ghost" onclick="downloadReviewHistoryExport('json')">History JSON</button>
+              </div>
+            </div>
+            <div class="toolbar-meta" id="queue-meta"></div>
+          </div>
+          <div class="table-scroll table-scroll-queue">
+            <table class="queue-table">
+              <thead><tr>
+                <th><button type="button" class="th-sort-btn" id="qsort-case" data-label="Case" onclick="setQueueSort('case')">Case</button></th>
+                <th>Type</th>
+                <th>ID</th>
+                <th><button type="button" class="th-sort-btn" id="qsort-status" data-label="Status" onclick="setQueueSort('status')">Status</button></th>
+                <th>Disposition</th>
+                <th>Owner</th>
+                <th><button type="button" class="th-sort-btn" id="qsort-priority" data-label="Priority" onclick="setQueueSort('priority')">Priority</button></th>
+                <th><button type="button" class="th-sort-btn" id="qsort-updated" data-label="Updated" onclick="setQueueSort('updated')">Updated</button></th>
+                <th>Actions</th>
+              </tr></thead>
+              <tbody id="queue-table"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="queue-pagination"></div>
+        </div>
+      </div>
+
+      <!-- Investigate page -->
+      <div id="page-investigate" style="display:none">
+        <div class="card" style="max-width:640px">
+          <div class="card-title">Start Investigation</div>
+          <div class="input-group">
+            <label>Case Name (optional)</label>
+            <input class="input" id="inv-case-name" placeholder="auto-generated if empty">
+          </div>
+          <div class="input-group">
+            <label>EVTX Source</label>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <button class="btn btn-sm btn-primary" id="btn-upload-mode" onclick="setInvMode('upload')">Upload Files</button>
+              <button class="btn btn-sm" id="btn-path-mode" onclick="setInvMode('path')" style="background:var(--surface2);color:var(--text)">Local Path</button>
+              <button class="btn btn-sm" id="btn-live-mode" onclick="setInvMode('live')" style="background:var(--surface2);color:var(--text)">Live Windows</button>
+            </div>
+          </div>
+          <div id="inv-upload-section">
+            <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+              <input type="file" id="file-input" multiple accept=".evtx">
+              <div style="font-size:16px;margin-bottom:8px">Drop EVTX files here</div>
+              <div style="font-size:13px">or click to browse</div>
+            </div>
+            <div id="file-list" style="margin-top:10px;font-size:13px;color:var(--text2)"></div>
+          </div>
+          <div id="inv-path-section" style="display:none">
+            <div class="input-group">
+              <label>Local EVTX Path</label>
+              <input class="input" id="inv-evtx-path" placeholder="C:\path\to\logs or single .evtx file">
+            </div>
+          </div>
+          <div id="inv-live-section" style="display:none">
+            <div class="subtle-hint">Run a live scan from this Windows machine using the same shared investigation engine as the CLI.</div>
+            <div class="subtle-hint">For full Security and Sysmon coverage, start <code>python server.py</code> from an Administrator PowerShell before opening the dashboard.</div>
+            <div class="prefs-grid">
+              <div class="input-group">
+                <label>Live Lookback</label>
+                <select class="input" id="inv-live-since">
+                  <option value="15">Last 15 minutes</option>
+                  <option value="30" selected>Last 30 minutes</option>
+                  <option value="60">Last 60 minutes</option>
+                  <option value="180">Last 3 hours</option>
+                  <option value="720">Last 12 hours</option>
+                  <option value="1440">Last 24 hours</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label>Collection Preset</label>
+                <div class="toggle-row">
+                  <input type="checkbox" id="inv-live-recommended" checked onclick="toggleLiveRecommendedChannels()">
+                  <div>
+                    <div style="font-weight:600">Use recommended forensic channels</div>
+                    <div class="user-subtle">Security, System, PowerShell Operational, and Sysmon Operational.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="input-group">
+              <label>Live Channels</label>
+              <div class="prefs-grid">
+                <label class="toggle-row"><input type="checkbox" class="inv-live-channel" value="Security" checked> <span>Security</span></label>
+                <label class="toggle-row"><input type="checkbox" class="inv-live-channel" value="System" checked> <span>System</span></label>
+                <label class="toggle-row"><input type="checkbox" class="inv-live-channel" value="Microsoft-Windows-PowerShell/Operational" checked> <span>PowerShell Operational</span></label>
+                <label class="toggle-row"><input type="checkbox" class="inv-live-channel" value="Microsoft-Windows-Sysmon/Operational" checked> <span>Sysmon Operational</span></label>
+              </div>
+            </div>
+            <div class="card-soft" style="margin-top:12px">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                <div>
+                  <div class="card-title" style="font-size:15px">Live Scan Health</div>
+                  <div class="subtle-hint" id="live-health-hint">Checking whether this server session can read the recommended live channels...</div>
+                </div>
+                <button class="btn btn-sm btn-ghost" onclick="loadLiveHealth(true)">Refresh</button>
+              </div>
+              <div id="live-health-body" style="margin-top:12px"></div>
+            </div>
+          </div>
+          <div class="input-group" style="margin-top:12px">
+            <label><input type="checkbox" id="inv-sigma"> Enable Sigma rules</label>
+          </div>
+          <button class="btn btn-primary" onclick="startInvestigation()" id="btn-start" style="margin-top:8px">Start Investigation</button>
+          <div id="inv-status" style="margin-top:12px;font-size:14px"></div>
+        </div>
+      </div>
+
+      <!-- Jobs page -->
+      <div id="page-jobs" style="display:none">
+        <div class="card">
+          <div class="card-title">Active & Recent Jobs</div>
+          <div class="subtle-hint">Completed jobs open their case detail. Running jobs stay here for progress tracking.</div>
+          <div class="table-toolbar">
+            <div class="toolbar-group">
+              <div class="input-group">
+                <label>Sort By</label>
+                <select class="input" id="jobs-sort" onchange="updateJobsView()">
+                  <option value="updated_desc">Most recent first</option>
+                  <option value="status_asc">Status</option>
+                  <option value="case_asc">Case name A-Z</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label>Rows</label>
+                <select class="input" id="jobs-page-size" onchange="changePageSize('jobs', this.value)">
+                  <option value="10">10</option>
+                  <option value="15" selected>15</option>
+                  <option value="25">25</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px;align-items:flex-end">
+                <button class="btn btn-sm btn-ghost" onclick="toggleVisibleJobsSelection(true)">Select Visible</button>
+                <button class="btn btn-sm btn-ghost" onclick="clearSelectedJobs()">Clear Selection</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteSelectedJobs()" id="jobs-delete-selected" disabled>Delete Selected</button>
+              </div>
+            </div>
+            <div class="toolbar-meta" id="jobs-meta"></div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th style="width:42px"><input type="checkbox" id="jobs-select-all" onclick="toggleVisibleJobsSelection(this.checked)"></th><th>Job ID</th><th>Case</th><th>Stage</th><th>Status</th><th>Message</th></tr></thead>
+              <tbody id="jobs-table"></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="jobs-pagination"></div>
+        </div>
+      </div>
+
+      <!-- Case detail page -->
+      <div id="page-case-detail" style="display:none">
+        <div class="detail-header">
+          <div>
+            <div style="font-size:13px;color:var(--text2);cursor:pointer" onclick="showPage('dashboard')">&larr; Back to cases</div>
+            <div class="detail-title" id="detail-case-name"></div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <a id="detail-report-link" class="btn btn-sm btn-primary" target="_blank" style="text-decoration:none">Open Full Report</a>
+            <button class="btn btn-sm btn-danger" id="detail-delete-btn">Delete</button>
+          </div>
+        </div>
+        <div class="stats" id="detail-stats"></div>
+        <div class="detail-tabs" id="detail-tabs"></div>
+        <div id="detail-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast-stack" class="toast-stack"></div>
+<div id="auth-overlay" class="auth-overlay hidden">
+  <div class="auth-card">
+    <div class="card-title" id="auth-title">Sign In</div>
+    <div class="auth-copy" id="auth-copy">Sign in to review cases, launch investigations, and keep analyst actions attributable.</div>
+    <div class="auth-grid">
+      <div class="input-group">
+        <label>Username</label>
+        <input class="input" id="auth-username" placeholder="e.g. analyst1">
+      </div>
+      <div class="input-group">
+        <label>Password</label>
+        <input class="input" id="auth-password" type="password" placeholder="At least 10 characters">
+      </div>
+    </div>
+    <div class="auth-actions">
+      <button class="btn btn-primary" id="auth-submit" onclick="submitAuth()">Sign In</button>
+      <button class="btn btn-ghost hidden" id="auth-cancel" onclick="closeAuthOverlay()">Cancel</button>
+    </div>
+    <div class="auth-message" id="auth-message"></div>
+  </div>
+</div>
+<div id="user-admin-modal" class="modal-shell hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div>
+        <div class="card-title">User Access</div>
+        <div class="section-kicker">Create analyst, viewer, or admin accounts without touching engine artifacts.</div>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="closeUserAdmin()">Close</button>
+    </div>
+      <div class="modal-body">
+        <div class="card" style="margin:0">
+          <div class="card-title">Create User</div>
+        <div class="review-grid">
+          <div class="input-group">
+            <label>Username</label>
+            <input class="input" id="new-user-username" placeholder="e.g. analyst2">
+          </div>
+          <div class="input-group">
+            <label>Role</label>
+            <select class="input" id="new-user-role">
+              <option>analyst</option>
+              <option>viewer</option>
+              <option>admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Password</label>
+          <input class="input" id="new-user-password" type="password" placeholder="At least 10 characters">
+        </div>
+        <div class="auth-actions">
+          <button class="btn btn-primary" onclick="createUser()">Create User</button>
+          <div class="auth-message" id="user-admin-message"></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">Current Users</div>
+        <div class="users-list" id="users-list">
+          <div class="loading-state">Loading users...</div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">Admin Audit</div>
+        <div class="section-kicker">Recent user-management and access events</div>
+        <div class="audit-toolbar">
+          <div class="input-group">
+            <label>Action</label>
+            <select class="input" id="audit-action" onchange="loadAuditEvents()">
+              <option value="">All actions</option>
+              <option value="bootstrap_admin">Bootstrap</option>
+              <option value="login">Login</option>
+              <option value="logout">Logout</option>
+              <option value="create_user">Create user</option>
+              <option value="update_user">Update user</option>
+              <option value="change_password">Change password</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Actor</label>
+            <input class="input" id="audit-actor" placeholder="Filter by actor" oninput="loadAuditEvents()">
+          </div>
+          <div class="input-group">
+            <label>Target</label>
+            <input class="input" id="audit-target" placeholder="Filter by target" oninput="loadAuditEvents()">
+          </div>
+          <div class="input-group">
+            <label>Search</label>
+            <input class="input" id="audit-search" placeholder="Search action or details" oninput="loadAuditEvents()">
+          </div>
+        </div>
+        <div class="audit-meta-row">
+          <div class="toolbar-meta" id="audit-meta">Showing recent audit activity</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-ghost" onclick="downloadAuditExport('csv')">Download CSV</button>
+            <button class="btn btn-sm btn-ghost" onclick="downloadAuditExport('json')">Download JSON</button>
+            <button class="btn btn-sm btn-ghost" onclick="clearAuditFilters()">Clear Filters</button>
+          </div>
+        </div>
+        <div class="audit-list" id="audit-list">
+          <div class="loading-state">Loading audit events...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="preferences-modal" class="modal-shell hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <div>
+        <div class="card-title">Display Preferences</div>
+        <div class="section-kicker">These preferences are saved to your account and follow your session.</div>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="closePreferencesModal()">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="prefs-grid">
+        <div class="input-group">
+          <label>Default Landing Page</label>
+          <select class="input" id="pref-landing-page">
+            <option value="dashboard">Dashboard</option>
+            <option value="queue">Review Queue</option>
+            <option value="jobs">Running Jobs</option>
+            <option value="investigate">New Investigation</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Dashboard Focus</label>
+          <select class="input" id="pref-dashboard-focus">
+            <option value="mine">My review workload</option>
+            <option value="open">Open triage items</option>
+            <option value="priority">Priority watchlist</option>
+            <option value="jobs">Recent jobs</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Theme</label>
+          <select class="input" id="pref-theme-mode">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Dashboard Widgets</label>
+          <div class="toggle-row"><input type="checkbox" id="widget-landing-board"><div><div style="font-weight:600">Personal landing board</div><div class="user-subtle">Show the personalized hero board at the top of the dashboard.</div></div></div>
+          <div class="toggle-row" style="margin-top:8px"><input type="checkbox" id="widget-review-focus"><div><div style="font-weight:600">Review focus</div><div class="user-subtle">Keep queued review cases visible on the dashboard.</div></div></div>
+          <div class="toggle-row" style="margin-top:8px"><input type="checkbox" id="widget-priority-watch"><div><div style="font-weight:600">Priority watchlist</div><div class="user-subtle">Show high-priority cases with findings or incidents.</div></div></div>
+          <div class="toggle-row" style="margin-top:8px"><input type="checkbox" id="widget-recent-jobs"><div><div style="font-weight:600">Recent jobs pulse</div><div class="user-subtle">Keep completed and failed jobs visible without leaving the dashboard.</div></div></div>
+        </div>
+        <div class="input-group">
+          <label>Dense Table Mode</label>
+          <div class="toggle-row">
+            <input type="checkbox" id="pref-compact-density">
+            <div>
+              <div style="font-weight:600">Compact spacing</div>
+              <div class="user-subtle">Useful when you are triaging large queues or dense case detail.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="section-divider"></div>
+      <div>
+        <div class="card-title">Dashboard Templates</div>
+        <div class="section-kicker">Save named display presets for different workflows like morning triage, response leadership, or investigations.</div>
+        <div class="prefs-grid">
+          <div class="input-group">
+            <label>Saved Templates</label>
+            <select class="input" id="dashboard-template-select">
+              <option value="">Choose a template</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label>Template Name</label>
+            <input class="input" id="dashboard-template-name" placeholder="e.g. Morning triage">
+          </div>
+        </div>
+        <div class="prefs-actions-row">
+          <button class="btn btn-sm btn-primary" onclick="saveDashboardTemplate()">Save Current as Template</button>
+          <button class="btn btn-sm btn-ghost" onclick="applyDashboardTemplate()">Apply Template</button>
+          <button class="btn btn-sm btn-ghost" onclick="deleteDashboardTemplate()">Delete Template</button>
+          <div class="auth-message" id="dashboard-template-message"></div>
+        </div>
+      </div>
+      <div class="section-divider"></div>
+      <div>
+        <div class="card-title">Account Security</div>
+        <div class="section-kicker">Change your own password without waiting for an administrator reset.</div>
+        <div class="account-grid">
+          <div class="input-group">
+            <label>Current Password</label>
+            <input class="input" id="pref-current-password" type="password" placeholder="Enter current password">
+          </div>
+          <div class="input-group">
+            <label>New Password</label>
+            <input class="input" id="pref-new-password" type="password" placeholder="At least 10 characters">
+          </div>
+          <div class="input-group">
+            <label>Confirm New Password</label>
+            <input class="input" id="pref-confirm-password" type="password" placeholder="Re-enter new password">
+          </div>
+        </div>
+        <div class="auth-actions">
+          <button class="btn btn-ghost" onclick="changeOwnPassword()">Update Password</button>
+          <div class="auth-message" id="password-message"></div>
+        </div>
+      </div>
+      <div class="auth-actions">
+        <button class="btn btn-primary" onclick="saveDisplayPreferences()">Save Preferences</button>
+        <div class="auth-message" id="preferences-message"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentPage = 'dashboard';
+let selectedFiles = [];
+let invMode = 'upload';
+let reviewEnums = {statuses:[], dispositions:[]};
+let authState = { authenticated: false, bootstrapRequired: false, user: null, roles: [], csrfToken: '' };
+let runtimeState = { mode: 'offline', label: 'Offline' };
+let authMode = 'login';
+let savedQueueViews = {};
+let userPreferences = {
+  landingPage: 'dashboard',
+  dashboardFocus: 'mine',
+  themeMode: 'system',
+  dashboardWidgets: ['landing-board', 'review-focus', 'priority-watch', 'recent-jobs'],
+  dashboardTemplates: {},
+  activeDashboardTemplate: '',
+  compactDensity: false,
+  tableState: {},
+  savedQueueViews: {},
+};
+let _casesCache = [];
+let _queueCache = [];
+let _jobsCache = [];
+let liveHealthState = null;
+let liveHealthLoaded = false;
+let selectedJobIds = new Set();
+const tableState = {
+  cases: { page: 1, pageSize: 15, sort: 'date_desc' },
+  queue: { page: 1, pageSize: 25, sort: 'updated_desc' },
+  jobs: { page: 1, pageSize: 15, sort: 'updated_desc' },
+};
+const THEME_LABELS = { system: 'System', dark: 'Dark', light: 'Light' };
+const STATE_CHANGING_METHODS = new Set(['POST', 'PATCH', 'DELETE']);
+const CSRF_EXEMPT_PATHS = new Set(['/api/auth/login', '/api/auth/bootstrap']);
+const systemThemeMedia = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+if (systemThemeMedia) {
+  const handleSystemThemeChange = () => {
+    if ((userPreferences.themeMode || 'system') === 'system') {
+      applyThemePreference();
+    }
+  };
+  if (typeof systemThemeMedia.addEventListener === 'function') {
+    systemThemeMedia.addEventListener('change', handleSystemThemeChange);
+  } else if (typeof systemThemeMedia.addListener === 'function') {
+    systemThemeMedia.addListener(handleSystemThemeChange);
+  }
+}
+
+// --- Navigation ---
+function showPage(page) {
+  if (!authState.authenticated) {
+    openAuthOverlay();
+    return;
+  }
+  document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
+  document.getElementById('page-' + page).style.display = '';
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
+  currentPage = page;
+  const titles = {dashboard:'Dashboard', investigate:'New Investigation', jobs:'Running Jobs', queue:'Review Queue', 'case-detail':'Case Detail'};
+  document.getElementById('page-title').textContent = titles[page] || page;
+  if (page === 'dashboard') loadCases();
+  if (page === 'jobs') loadJobs();
+  if (page === 'queue') loadQueue();
+  if (page === 'investigate' && invMode === 'live') loadLiveHealth();
+}
+
+// --- Init ---
+async function init() {
+  document.getElementById('auth-password')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAuth();
+  });
+  applyThemePreference();
+  renderSavedQueueViews();
+  try {
+    const h = await fetch(API + '/api/health').then(r=>r.json());
+    document.getElementById('version-badge').textContent = 'v' + h.version;
+    setRuntimeBadge(h.runtime);
+  } catch (e) {
+    document.getElementById('version-badge').textContent = 'offline';
+    setRuntimeBadge({ mode: 'offline', label: 'Offline' });
+  }
+  await refreshSession(true);
+  setInterval(() => {
+    if (!authState.authenticated) return;
+    if(currentPage==='dashboard') loadCases();
+    if(currentPage==='jobs') loadJobs();
+  }, 5000);
+}
+
+function setRuntimeBadge(runtime) {
+  const badge = document.getElementById('runtime-badge');
+  if (!badge) return;
+  const mode = runtime && typeof runtime.mode === 'string' ? runtime.mode.toLowerCase() : 'offline';
+  const normalizedMode = mode === 'docker' ? 'docker' : mode === 'local' ? 'local' : 'offline';
+  const label = runtime && runtime.label
+    ? runtime.label
+    : normalizedMode === 'docker'
+      ? 'Docker'
+      : normalizedMode === 'local'
+        ? 'Local Python'
+        : 'Offline';
+  runtimeState = { mode: normalizedMode, label };
+  badge.className = `session-pill runtime-pill runtime-${normalizedMode}`;
+  badge.textContent = `Runtime: ${label}`;
+}
+
+function renderTableMessage(tbodyId, colspan, message, kind = 'empty') {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const isLoading = kind === 'loading';
+  const cls = isLoading ? 'loading-state' : 'empty-state';
+  const inner = isLoading
+    ? `<span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>${esc(message)}</span></span>`
+    : esc(message);
+  tbody.innerHTML = `<tr><td colspan="${colspan}"><div class="${cls}">${inner}</div></td></tr>`;
+}
+
+function defaultDashboardWidgets() {
+  return ['landing-board', 'review-focus', 'priority-watch', 'recent-jobs'];
+}
+
+function defaultDashboardTemplate() {
+  return {
+    landingPage: 'dashboard',
+    dashboardFocus: 'mine',
+    themeMode: 'system',
+    dashboardWidgets: defaultDashboardWidgets(),
+    compactDensity: false,
+  };
+}
+
+function resolveThemeMode(mode) {
+  if (mode === 'dark' || mode === 'light') return mode;
+  return systemThemeMedia && systemThemeMedia.matches ? 'dark' : 'light';
+}
+
+function updateThemeButtonLabel() {
+  const btn = document.getElementById('btn-cycle-theme');
+  if (btn) btn.textContent = `Theme: ${THEME_LABELS[userPreferences.themeMode || 'system'] || 'System'}`;
+}
+
+function applyThemePreference() {
+  const mode = userPreferences.themeMode || 'system';
+  const resolved = resolveThemeMode(mode);
+  document.body.classList.remove('theme-dark', 'theme-light');
+  document.body.classList.add(`theme-${resolved}`);
+  document.body.dataset.themeMode = mode;
+  if (document.getElementById('pref-theme-mode')) document.getElementById('pref-theme-mode').value = mode;
+  updateThemeButtonLabel();
+}
+
+function getDashboardWidgets() {
+  const widgets = Array.isArray(userPreferences.dashboardWidgets) && userPreferences.dashboardWidgets.length
+    ? userPreferences.dashboardWidgets
+    : defaultDashboardWidgets();
+  return new Set(widgets);
+}
+
+function getDashboardTemplates() {
+  return userPreferences.dashboardTemplates || {};
+}
+
+function collectDisplayPreferencePatchFromInputs() {
+  return {
+    landingPage: document.getElementById('pref-landing-page').value,
+    dashboardFocus: document.getElementById('pref-dashboard-focus').value,
+    themeMode: document.getElementById('pref-theme-mode').value,
+    dashboardWidgets: collectDashboardWidgetsFromInputs(),
+    compactDensity: !!document.getElementById('pref-compact-density').checked,
+  };
+}
+
+function collectDashboardWidgetsFromInputs() {
+  const picks = [];
+  if (document.getElementById('widget-landing-board')?.checked) picks.push('landing-board');
+  if (document.getElementById('widget-review-focus')?.checked) picks.push('review-focus');
+  if (document.getElementById('widget-priority-watch')?.checked) picks.push('priority-watch');
+  if (document.getElementById('widget-recent-jobs')?.checked) picks.push('recent-jobs');
+  return picks.length ? picks : defaultDashboardWidgets();
+}
+
+function renderDashboardTemplateOptions() {
+  const select = document.getElementById('dashboard-template-select');
+  if (!select) return;
+  const templates = getDashboardTemplates();
+  const names = Object.keys(templates).sort((a, b) => a.localeCompare(b));
+  select.innerHTML = `<option value="">Choose a template</option>` + names.map(name => `<option value="${esc(name)}"${userPreferences.activeDashboardTemplate === name ? ' selected' : ''}>${esc(name)}</option>`).join('');
+}
+
+function compareCases(a, b, sort) {
+  if (sort === 'date_asc') return safeDate(a.started_at) - safeDate(b.started_at);
+  if (sort === 'priority_asc') return priorityRank(a.response_priority) - priorityRank(b.response_priority) || safeDate(b.started_at) - safeDate(a.started_at);
+  if (sort === 'incidents_desc') return (b.incident_count||0) - (a.incident_count||0) || priorityRank(a.response_priority) - priorityRank(b.response_priority);
+  if (sort === 'findings_desc') return (b.finding_count||0) - (a.finding_count||0) || (b.incident_count||0) - (a.incident_count||0);
+  if (sort === 'name_asc') return String(a.name||'').localeCompare(String(b.name||''));
+  return safeDate(b.started_at) - safeDate(a.started_at);
+}
+
+async function renderDashboardFocus(cases) {
+  const container = document.getElementById('dashboard-focus');
+  if (!container) return;
+  const widgets = getDashboardWidgets();
+  const priorityCases = [...cases]
+    .filter(c => (c.finding_count || 0) || (c.incident_count || 0))
+    .sort((a, b) => compareCases(a, b, 'priority_asc'))
+    .slice(0, 4);
+  let queueItems = [];
+  try {
+    queueItems = await apiJSON('/api/review/queue?limit=200');
+  } catch (e) {}
+  if (widgets.has('recent-jobs') && !_jobsCache.length) {
+    try {
+      const jobs = await apiJSON('/api/jobs');
+      _jobsCache = Array.isArray(jobs) ? jobs : [];
+    } catch (e) {}
+  }
+  const openCount = queueItems.filter(i => (i.status || 'Open') === 'Open').length;
+  const inReviewCount = queueItems.filter(i => i.status === 'In Review').length;
+  const escalatedCount = queueItems.filter(i => i.status === 'Escalated').length;
+  const myOwner = authState.user?.username || '';
+  const myQueueItems = queueItems.filter(i => (i.owner || '') === myOwner);
+  const myOpen = myQueueItems.filter(i => (i.status || 'Open') === 'Open').length;
+  const unassigned = queueItems.filter(i => !(i.owner || '').trim()).length;
+  const reviewCases = [...new Set(queueItems.map(i => i.case_name).filter(Boolean))].slice(0, 5);
+  const dashboardFocus = userPreferences.dashboardFocus || 'mine';
+  const focusCardTitle = dashboardFocus === 'priority'
+    ? 'Priority Watch'
+    : dashboardFocus === 'jobs'
+      ? 'Recent Job Watch'
+      : dashboardFocus === 'open'
+        ? 'Open Triage Lane'
+        : 'My Analyst Lane';
+  const focusCopy = dashboardFocus === 'priority'
+    ? 'Keep the highest-impact cases and escalations in view first.'
+    : dashboardFocus === 'jobs'
+      ? 'Track fresh investigations and move quickly into the cases that completed cleanly.'
+      : dashboardFocus === 'open'
+        ? 'Start with the oldest open work so new alerts do not pile up ahead of triage.'
+        : `Built for ${esc(authState.user?.username || 'your session')}: keep assigned work and saved views close at hand.`;
+  const recentJobs = [..._jobsCache]
+    .filter(j => j.status === 'completed' || j.status === 'failed')
+    .slice(0, 4)
+    .map(j => `${j.case_name || j.job_id} · ${j.status}`);
+  const laneList = dashboardFocus === 'priority'
+    ? priorityCases.map(c => `${c.name} · ${c.response_priority || 'P4'} · ${c.finding_count || 0} findings`)
+    : dashboardFocus === 'jobs'
+      ? recentJobs
+      : dashboardFocus === 'open'
+        ? queueItems.filter(i => (i.status || 'Open') === 'Open').slice(0, 4).map(i => `${i.case_name} · ${i.item_type} · ${i.item_id}`)
+        : myQueueItems.slice(0, 4).map(i => `${i.case_name} · ${i.item_type} · ${i.item_id}`);
+  const focusAction = dashboardFocus === 'jobs'
+    ? `<button class="btn btn-sm btn-primary" onclick="showPage('jobs')">Open Running Jobs</button>`
+    : dashboardFocus === 'priority'
+      ? `<button class="btn btn-sm btn-primary" onclick="applyQueueShortcut('priority')">Open Priority Queue</button>`
+      : dashboardFocus === 'open'
+        ? `<button class="btn btn-sm btn-primary" onclick="applyQueueShortcut('unassigned')">Open Open Queue</button>`
+        : `<button class="btn btn-sm btn-primary" onclick="applyQueueShortcut('mine')">Open My Queue</button>`;
+  const cards = [];
+  if (widgets.has('landing-board')) {
+    cards.push(`
+    <div class="card card-soft card-accent">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <div class="hero-eyebrow">Personal Landing Board</div>
+          <div class="hero-title">${esc(focusCardTitle)}</div>
+          <div class="hero-text">${focusCopy}</div>
+          <div class="hero-pills">
+            <span class="pill">${esc(authState.user?.role || 'guest')}</span>
+            <span class="pill">${myOpen} assigned open</span>
+            <span class="pill">${unassigned} unassigned</span>
+            <span class="pill">${savedQueueViews && Object.keys(savedQueueViews).length ? Object.keys(savedQueueViews).length : 0} saved views</span>
+            ${userPreferences.activeDashboardTemplate ? `<span class="template-chip">Template: ${esc(userPreferences.activeDashboardTemplate)}</span>` : ''}
+          </div>
+          <div class="hero-actions">
+            ${focusAction}
+            <button class="btn btn-sm btn-ghost" onclick="openPreferencesModal()">Tune Landing Preferences</button>
+          </div>
+          <div class="section-kicker" style="margin-top:8px">Next items to look at</div>
+          ${renderMiniList(laneList, 'Nothing urgent is sitting in your preferred lane right now.')}
+        </div>
+        <div class="mini-stat-grid">
+          <div class="mini-stat">
+            <div class="mini-stat-value" style="color:var(--blue)">${openCount}</div>
+            <div class="mini-stat-label">Open review items</div>
+          </div>
+          <div class="mini-stat">
+            <div class="mini-stat-value" style="color:var(--orange)">${inReviewCount}</div>
+            <div class="mini-stat-label">In review</div>
+          </div>
+          <div class="mini-stat">
+            <div class="mini-stat-value" style="color:var(--red)">${escalatedCount}</div>
+            <div class="mini-stat-label">Escalated</div>
+          </div>
+          <div class="mini-stat">
+            <div class="mini-stat-value" style="color:var(--green)">${myQueueItems.length}</div>
+            <div class="mini-stat-label">Assigned to you</div>
+          </div>
+        </div>
+      </div>
+    </div>`);
+  }
+  if (widgets.has('review-focus')) {
+    cards.push(`
+    <div class="card card-soft">
+      <div class="card-title">Review Focus</div>
+      <div class="section-kicker">Cases currently in the review orbit</div>
+      ${renderMiniList(reviewCases, 'No queued review items right now.')}
+    </div>`);
+  }
+  if (widgets.has('priority-watch')) {
+    cards.push(`
+    <div class="card card-soft">
+      <div class="card-title">Priority Watchlist</div>
+      <div class="section-kicker">Cases with findings or incidents worth a quick look</div>
+      ${priorityCases.length ? `<ul class="mini-list">${priorityCases.map(c => `<li><a href="#" class="table-link" onclick='event.preventDefault();openCase(${jsv(c.name)})'>${esc(c.name)}</a> · ${esc(c.response_priority || 'P4')} · ${c.finding_count||0} findings · ${c.incident_count||0} incidents</li>`).join('')}</ul>` : '<div style="color:var(--text2);font-size:13px">No active priority cases.</div>'}
+    </div>`);
+  }
+  if (widgets.has('recent-jobs')) {
+    const recentJobs = [..._jobsCache].slice(0, 5);
+    cards.push(`
+    <div class="card card-soft">
+      <div class="card-title">Recent Jobs Pulse</div>
+      <div class="section-kicker">Fresh investigations and artifact availability at a glance</div>
+      ${recentJobs.length ? `<ul class="mini-list">${recentJobs.map(job => `<li>${job.case_name && job.case_available ? `<a href="#" class="table-link" onclick='event.preventDefault();openCase(${jsv(job.case_name)})'>${esc(job.case_name)}</a>` : esc(job.case_name || job.job_id)} · ${esc(job.status || 'unknown')} · ${esc(job.stage || 'queued')}${job.case_name && !job.case_available ? ` · ${esc(job.case_missing_reason || 'artifacts unavailable')}` : ''}</li>`).join('')}</ul>` : '<div style="color:var(--text2);font-size:13px">No recent jobs yet.</div>'}
+    </div>`);
+  }
+  container.innerHTML = cards.join('');
+}
+
+// --- Cases ---
+async function loadCases() {
+  renderTableMessage('cases-table', 7, 'Loading cases...', 'loading');
+  try {
+    const cases = await apiJSON('/api/cases');
+    _casesCache = Array.isArray(cases) ? cases : [];
+    const total = _casesCache.length;
+    const completed = _casesCache.filter(c=>c.status==='completed').length;
+    const incidents = _casesCache.reduce((s,c)=>s+(c.incident_count||0),0);
+    const findings = _casesCache.reduce((s,c)=>s+(c.finding_count||0),0);
+
+    document.getElementById('stats-row').innerHTML =
+      stat(total, 'Total Cases', '--accent') +
+      stat(completed, 'Completed', '--green') +
+      stat(findings, 'Total Findings', '--orange') +
+      stat(incidents, 'Total Incidents', '--red');
+
+    await renderDashboardFocus(_casesCache);
+    updateCasesView();
+  } catch (e) {
+    renderTableMessage('cases-table', 7, 'Failed to load cases.', 'empty');
+    const focus = document.getElementById('dashboard-focus');
+    if (focus) {
+      focus.innerHTML = `<div class="card card-danger-soft"><div class="card-title">Dashboard Unavailable</div><div class="empty-state" style="text-align:left;padding:4px 0 0">Case summaries could not be loaded. Check the API health, then refresh this page.</div></div>`;
+    }
+    notify('Failed to load dashboard cases.', 'error');
+  }
+}
+
+function updateCasesView() {
+  const tb = document.getElementById('cases-table');
+  if (!tb) return;
+  const search = (document.getElementById('cases-search')?.value || '').trim().toLowerCase();
+  tableState.cases.sort = document.getElementById('cases-sort')?.value || tableState.cases.sort;
+  savePreferencesPatch({ tableState: { cases: tableState.cases, queue: tableState.queue, jobs: tableState.jobs } });
+  let cases = [..._casesCache];
+  if (search) {
+    cases = cases.filter(c => String(c.name || '').toLowerCase().includes(search));
+  }
+  cases.sort((a, b) => compareCases(a, b, tableState.cases.sort));
+  if (!cases.length) {
+    renderTableMessage('cases-table', 7, search ? 'No cases match the current search.' : 'No investigations yet. Upload EVTX files to get started.');
+    renderPagination('cases', 0, 0);
+    setMeta('cases-meta', search ? 'Filtered results: 0' : 'No investigations available yet');
+    return;
+  }
+  const paged = paginate(cases, 'cases');
+  tb.innerHTML = paged.map(c => `<tr onclick='openCase(${jsv(c.name)})'>
+    <td style="font-weight:600"><a href="#" class="table-link" onclick='event.preventDefault();event.stopPropagation();openCase(${jsv(c.name)})'>${esc(c.name)}</a></td>
+    <td><span class="badge badge-${c.status||'unknown'}">${c.status||'unknown'}</span></td>
+    <td>${c.response_priority ? `<span class="badge badge-${c.response_priority.toLowerCase()}">${c.response_priority}</span>` : '-'}</td>
+    <td>${c.signal_count||0}</td>
+    <td>${c.finding_count||0}</td>
+    <td>${c.incident_count||0}</td>
+    <td style="color:var(--text2);font-size:13px">${c.started_at ? c.started_at.slice(0,16).replace('T',' ') : '-'}</td>
+  </tr>`).join('');
+  renderPagination('cases', cases.length, paged.length);
+  setMeta('cases-meta', `${cases.length} case(s) in view`);
+}
+
+function stat(value, label, color) {
+  return `<div class="stat"><div class="stat-value" style="color:var(${color})">${value}</div><div class="stat-label">${label}</div></div>`;
+}
+
+function jsv(value) {
+  return JSON.stringify(String(value || ''));
+}
+
+function domId(prefix, value) {
+  return `${prefix}-${String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function reviewPanelPrefix(itemType, itemId) {
+  return `rv-${itemType}-${String(itemId || '').replace(/[^a-zA-Z0-9]/g,'_')}`;
+}
+
+function notify(message, kind = 'info') {
+  const stack = document.getElementById('toast-stack');
+  if (!stack) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${kind}`;
+  toast.textContent = message;
+  stack.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 180);
+  }, 3200);
+}
+
+function renderMiniList(items, emptyText) {
+  if (!items || !items.length) {
+    return `<div style="color:var(--text2);font-size:13px">${esc(emptyText || 'None')}</div>`;
+  }
+  return `<ul class="mini-list">${items.map(item => `<li>${esc(item)}</li>`).join('')}</ul>`;
+}
+
+function formatTiming(value) {
+  const ms = Number(value || 0);
+  if (!Number.isFinite(ms) || ms < 0) return '-';
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
+  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`;
+  return `${Math.round(ms)} ms`;
+}
+
+function summarizeDetectorTimings(detectorTimings) {
+  const pairs = Object.entries(detectorTimings || {})
+    .filter(([key, value]) => key.endsWith('_ms') && Number.isFinite(Number(value)))
+    .map(([key, value]) => ({ name: key.replace(/_ms$/,'').replace(/_/g,' '), ms: Number(value) }))
+    .sort((a, b) => b.ms - a.ms);
+  if (!pairs.length) return ['No per-detector timing available.'];
+  return pairs.slice(0, 6).map(item => `${item.name}: ${formatTiming(item.ms)}`);
+}
+
+function describeHistoryEvent(event) {
+  if (!event) return '';
+  if (event.field === 'note_added') {
+    return `${esc(event.changed_by || 'analyst')} added note: "${esc(event.new_value || '')}"`;
+  }
+  return `${esc(event.changed_by || 'analyst')} changed <b>${esc(event.field)}</b> from "${esc(event.old_value || '(empty)')}" to "${esc(event.new_value)}"`;
+}
+
+function summarizeReviewState(findings, incidents) {
+  const summary = { open: 0, inReview: 0, escalated: 0, closed: 0, suppressed: 0, withOwner: 0 };
+  [...(findings || []), ...(incidents || [])].forEach(item => {
+    const status = (item.review?.status || 'Open').toLowerCase();
+    if (status === 'open') summary.open += 1;
+    else if (status === 'in review') summary.inReview += 1;
+    else if (status === 'escalated') summary.escalated += 1;
+    else if (status === 'closed') summary.closed += 1;
+    else if (status === 'suppressed') summary.suppressed += 1;
+    if (item.review?.owner) summary.withOwner += 1;
+  });
+  return summary;
+}
+
+function priorityRank(priority) {
+  const p = String(priority || 'P9').toUpperCase();
+  if (p === 'P1') return 1;
+  if (p === 'P2') return 2;
+  if (p === 'P3') return 3;
+  if (p === 'P4') return 4;
+  return 9;
+}
+
+function safeDate(value) {
+  const ts = value ? Date.parse(value) : NaN;
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function canReviewMutate() {
+  return !!authState.user && ['admin', 'analyst'].includes(authState.user.role);
+}
+
+function isAdmin() {
+  return !!authState.user && authState.user.role === 'admin';
+}
+
+function getReviewerName() {
+  return authState.user?.username || '';
+}
+
+function updateAuthUI() {
+  const display = document.getElementById('reviewer-display');
+  const roleBadge = document.getElementById('session-role-badge');
+  const loginBtn = document.getElementById('btn-auth-entry');
+  const logoutBtn = document.getElementById('btn-auth-logout');
+  const sidebarName = document.getElementById('sidebar-user-name');
+  const sidebarRole = document.getElementById('sidebar-user-role');
+  const sidebarLogoutBtn = document.getElementById('btn-sidebar-logout');
+  const manageBtn = document.getElementById('btn-manage-users');
+  const prefsBtn = document.getElementById('btn-open-preferences');
+  const detailDeleteBtn = document.getElementById('detail-delete-btn');
+  const investigateNav = document.querySelector('.nav-item[data-page="investigate"]');
+
+  if (display) {
+    display.textContent = authState.authenticated ? authState.user.username : (authState.bootstrapRequired ? 'Bootstrap required' : 'Sign in required');
+  }
+  if (sidebarName) {
+    sidebarName.textContent = authState.authenticated ? authState.user.username : (authState.bootstrapRequired ? 'Bootstrap required' : 'Sign in required');
+  }
+  if (roleBadge) {
+    const role = authState.user?.role || 'guest';
+    roleBadge.textContent = role;
+    roleBadge.className = `session-pill ${authState.user ? `role-${role}` : 'role-viewer'}`;
+  }
+  if (sidebarRole) sidebarRole.textContent = authState.user?.role || 'guest';
+  if (loginBtn) {
+    loginBtn.textContent = authState.bootstrapRequired ? 'Bootstrap' : 'Sign In';
+    loginBtn.classList.toggle('hidden', authState.authenticated);
+  }
+  if (logoutBtn) logoutBtn.classList.toggle('hidden', !authState.authenticated);
+  if (sidebarLogoutBtn) sidebarLogoutBtn.classList.toggle('hidden', !authState.authenticated);
+  if (manageBtn) manageBtn.classList.toggle('hidden', !isAdmin());
+  if (prefsBtn) prefsBtn.classList.toggle('hidden', !authState.authenticated);
+  if (detailDeleteBtn) detailDeleteBtn.classList.toggle('hidden', !isAdmin());
+  if (investigateNav) investigateNav.classList.toggle('disabled', !authState.authenticated || !canReviewMutate());
+}
+
+function setAuthMessage(message, kind = 'info') {
+  const el = document.getElementById('auth-message');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.color = kind === 'error' ? 'var(--red)' : kind === 'success' ? 'var(--green)' : 'var(--text2)';
+}
+
+function openAuthOverlay(forceMode) {
+  authMode = forceMode || (authState.bootstrapRequired ? 'bootstrap' : 'login');
+  const overlay = document.getElementById('auth-overlay');
+  const title = document.getElementById('auth-title');
+  const copy = document.getElementById('auth-copy');
+  const submit = document.getElementById('auth-submit');
+  const cancel = document.getElementById('auth-cancel');
+  if (!overlay || !title || !copy || !submit || !cancel) return;
+  title.textContent = authMode === 'bootstrap' ? 'Create First Admin' : 'Sign In';
+  copy.textContent = authMode === 'bootstrap'
+    ? 'Set up the first admin account for this workstation. After that, the API and dashboard use normal login.'
+    : 'Sign in to review cases, launch investigations, and keep analyst actions attributable.';
+  submit.textContent = authMode === 'bootstrap' ? 'Create Admin' : 'Sign In';
+  cancel.classList.toggle('hidden', !authState.authenticated);
+  overlay.classList.remove('hidden');
+  setAuthMessage('');
+  document.getElementById('auth-username')?.focus();
+}
+
+function closeAuthOverlay() {
+  if (!authState.authenticated) return;
+  document.getElementById('auth-overlay')?.classList.add('hidden');
+  setAuthMessage('');
+}
+
+function openUserAdmin() {
+  if (!isAdmin()) {
+    notify('Only admins can manage user access.', 'error');
+    return;
+  }
+  document.getElementById('user-admin-modal')?.classList.remove('hidden');
+  loadUsers();
+  loadAuditEvents();
+}
+
+function closeUserAdmin() {
+  document.getElementById('user-admin-modal')?.classList.add('hidden');
+  const msg = document.getElementById('user-admin-message');
+  if (msg) msg.textContent = '';
+}
+
+function openPreferencesModal() {
+  if (!authState.authenticated) return openAuthOverlay();
+  document.getElementById('pref-landing-page').value = userPreferences.landingPage || 'dashboard';
+  document.getElementById('pref-dashboard-focus').value = userPreferences.dashboardFocus || 'mine';
+  document.getElementById('pref-theme-mode').value = userPreferences.themeMode || 'system';
+  document.getElementById('pref-compact-density').checked = !!userPreferences.compactDensity;
+  const widgets = getDashboardWidgets();
+  if (document.getElementById('widget-landing-board')) document.getElementById('widget-landing-board').checked = widgets.has('landing-board');
+  if (document.getElementById('widget-review-focus')) document.getElementById('widget-review-focus').checked = widgets.has('review-focus');
+  if (document.getElementById('widget-priority-watch')) document.getElementById('widget-priority-watch').checked = widgets.has('priority-watch');
+  if (document.getElementById('widget-recent-jobs')) document.getElementById('widget-recent-jobs').checked = widgets.has('recent-jobs');
+  document.getElementById('preferences-message').textContent = '';
+  document.getElementById('password-message').textContent = '';
+  ['pref-current-password','pref-new-password','pref-confirm-password'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const templateMsg = document.getElementById('dashboard-template-message');
+  if (templateMsg) templateMsg.textContent = '';
+  const templateName = document.getElementById('dashboard-template-name');
+  if (templateName) templateName.value = '';
+  renderDashboardTemplateOptions();
+  document.getElementById('preferences-modal')?.classList.remove('hidden');
+}
+
+function closePreferencesModal() {
+  document.getElementById('preferences-modal')?.classList.add('hidden');
+}
+
+function authHeaders(headers = {}) {
+  const merged = Object.assign({'Content-Type': 'application/json'}, headers);
+  if (authState.csrfToken && !merged['X-CSRF-Token']) {
+    merged['X-CSRF-Token'] = authState.csrfToken;
+  }
+  return merged;
+}
+
+async function apiFetch(path, options = {}) {
+  const requestOptions = Object.assign({}, options);
+  const suppressAuthRedirect = !!requestOptions.suppressAuthRedirect;
+  delete requestOptions.suppressAuthRedirect;
+  const method = String(requestOptions.method || 'GET').toUpperCase();
+  const headers = Object.assign({}, requestOptions.headers || {});
+  if (
+    path.startsWith('/api/') &&
+    STATE_CHANGING_METHODS.has(method) &&
+    !CSRF_EXEMPT_PATHS.has(path) &&
+    authState.csrfToken &&
+    !headers['X-CSRF-Token']
+  ) {
+    headers['X-CSRF-Token'] = authState.csrfToken;
+  }
+  requestOptions.headers = headers;
+  const response = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, requestOptions));
+  if (response.status === 401 && path !== '/api/auth/me' && !suppressAuthRedirect) {
+    authState.authenticated = false;
+    authState.user = null;
+    authState.csrfToken = '';
+    updateAuthUI();
+    openAuthOverlay();
+  }
+  return response;
+}
+
+async function apiJSON(path, options = {}) {
+  const resp = await apiFetch(path, options);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const err = new Error(data.detail || `Request failed (${resp.status})`);
+    err.status = resp.status;
+    err.payload = data;
+    throw err;
+  }
+  return data;
+}
+
+async function refreshSession(initial = false) {
+  try {
+    const me = await apiJSON('/api/auth/me');
+    authState = {
+      authenticated: !!me.authenticated,
+      bootstrapRequired: !!me.bootstrap_required,
+      user: me.user || null,
+      roles: me.roles || [],
+      csrfToken: me.csrf_token || '',
+    };
+    updateAuthUI();
+    if (authState.authenticated) {
+      document.getElementById('auth-overlay')?.classList.add('hidden');
+      liveHealthLoaded = false;
+      reviewEnums = await apiJSON('/api/review/enums').catch(() => reviewEnums);
+      const pref = await apiJSON('/api/auth/preferences').catch(() => ({ preferences: {} }));
+      hydratePreferences(pref.preferences || {});
+      applyUserPreferences();
+      const landing = initial ? (userPreferences.landingPage || 'dashboard') : currentPage;
+      if (landing === 'queue') showPage('queue');
+      else if (landing === 'jobs') showPage('jobs');
+      else if (landing === 'investigate') showPage('investigate');
+      else if (currentPage === 'dashboard' || initial) loadCases();
+      else if (currentPage === 'jobs') loadJobs();
+      else if (currentPage === 'queue') loadQueue();
+      return;
+    }
+    if (initial || !authState.authenticated) {
+      openAuthOverlay(authState.bootstrapRequired ? 'bootstrap' : 'login');
+    }
+  } catch (e) {
+    updateAuthUI();
+    if (initial) {
+      setAuthMessage('Unable to reach the API. Verify the server is running.', 'error');
+      openAuthOverlay('login');
+    }
+  }
+}
+
+async function submitAuth() {
+  const username = document.getElementById('auth-username')?.value?.trim() || '';
+  const password = document.getElementById('auth-password')?.value || '';
+  if (!username || !password) {
+    setAuthMessage('Username and password are required.', 'error');
+    return;
+  }
+  const submit = document.getElementById('auth-submit');
+  if (submit) submit.disabled = true;
+  setAuthMessage(authMode === 'bootstrap' ? 'Creating admin account...' : 'Signing in...');
+  try {
+    const authResult = await apiJSON(authMode === 'bootstrap' ? '/api/auth/bootstrap' : '/api/auth/login', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ username, password }),
+    });
+    authState.csrfToken = authResult.csrf_token || '';
+    document.getElementById('auth-password').value = '';
+    notify(authMode === 'bootstrap' ? 'Admin account created.' : `Signed in as ${username}.`, 'success');
+    await refreshSession();
+  } catch (e) {
+    setAuthMessage(e.message || 'Authentication failed.', 'error');
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function logout() {
+  try {
+    await apiJSON('/api/auth/logout', { method: 'POST' });
+  } catch (e) {}
+  authState.authenticated = false;
+  authState.user = null;
+  authState.csrfToken = '';
+  liveHealthState = null;
+  liveHealthLoaded = false;
+  userPreferences = {
+    landingPage: 'dashboard',
+    dashboardFocus: 'mine',
+    themeMode: 'system',
+    dashboardWidgets: defaultDashboardWidgets(),
+    dashboardTemplates: {},
+    activeDashboardTemplate: '',
+    compactDensity: false,
+    tableState: {},
+    savedQueueViews: {},
+  };
+  savedQueueViews = {};
+  document.body.classList.remove('compact-density');
+  applyThemePreference();
+  updateAuthUI();
+  openAuthOverlay('login');
+  notify('Signed out.', 'info');
+}
+
+function hydratePreferences(pref = {}) {
+  userPreferences = Object.assign({
+    landingPage: 'dashboard',
+    dashboardFocus: 'mine',
+    themeMode: 'system',
+    dashboardWidgets: defaultDashboardWidgets(),
+    dashboardTemplates: {},
+    activeDashboardTemplate: '',
+    compactDensity: false,
+    tableState: {},
+    savedQueueViews: {},
+  }, pref || {});
+  savedQueueViews = userPreferences.savedQueueViews || {};
+  Object.assign(tableState.cases, userPreferences.tableState?.cases || {});
+  Object.assign(tableState.queue, userPreferences.tableState?.queue || {});
+  Object.assign(tableState.jobs, userPreferences.tableState?.jobs || {});
+  renderSavedQueueViews();
+  renderDashboardTemplateOptions();
+}
+
+function applyUserPreferences() {
+  document.body.classList.toggle('compact-density', !!userPreferences.compactDensity);
+  if (document.getElementById('pref-landing-page')) document.getElementById('pref-landing-page').value = userPreferences.landingPage || 'dashboard';
+  if (document.getElementById('pref-dashboard-focus')) document.getElementById('pref-dashboard-focus').value = userPreferences.dashboardFocus || 'mine';
+  if (document.getElementById('pref-theme-mode')) document.getElementById('pref-theme-mode').value = userPreferences.themeMode || 'system';
+  if (document.getElementById('pref-compact-density')) document.getElementById('pref-compact-density').checked = !!userPreferences.compactDensity;
+  const widgets = getDashboardWidgets();
+  if (document.getElementById('widget-landing-board')) document.getElementById('widget-landing-board').checked = widgets.has('landing-board');
+  if (document.getElementById('widget-review-focus')) document.getElementById('widget-review-focus').checked = widgets.has('review-focus');
+  if (document.getElementById('widget-priority-watch')) document.getElementById('widget-priority-watch').checked = widgets.has('priority-watch');
+  if (document.getElementById('widget-recent-jobs')) document.getElementById('widget-recent-jobs').checked = widgets.has('recent-jobs');
+  applyThemePreference();
+  if (document.getElementById('cases-page-size')) document.getElementById('cases-page-size').value = String(tableState.cases.pageSize || 15);
+  if (document.getElementById('cases-sort')) document.getElementById('cases-sort').value = tableState.cases.sort || 'date_desc';
+  if (document.getElementById('queue-page-size')) {
+    const queuePageSize = [25, 50, 100].includes(Number(tableState.queue.pageSize)) ? Number(tableState.queue.pageSize) : 25;
+    tableState.queue.pageSize = queuePageSize;
+    document.getElementById('queue-page-size').value = String(queuePageSize);
+  }
+  if (document.getElementById('queue-sort')) document.getElementById('queue-sort').value = tableState.queue.sort || 'updated_desc';
+  if (document.getElementById('jobs-page-size')) document.getElementById('jobs-page-size').value = String(tableState.jobs.pageSize || 15);
+  if (document.getElementById('jobs-sort')) document.getElementById('jobs-sort').value = tableState.jobs.sort || 'updated_desc';
+  renderDashboardTemplateOptions();
+}
+
+function formatLiveHealthState(status) {
+  if (status === 'ready') return { label: 'Ready', cls: 'health-state-ok' };
+  if (status === 'access_denied') return { label: 'Privilege Needed', cls: 'health-state-warn' };
+  if (status === 'not_found') return { label: 'Not Found', cls: 'health-state-bad' };
+  if (status === 'pywin32_missing') return { label: 'pywin32 Missing', cls: 'health-state-bad' };
+  if (status === 'unsupported') return { label: 'Unsupported', cls: 'health-state-bad' };
+  return { label: 'Check Needed', cls: 'health-state-warn' };
+}
+
+function renderLiveHealth() {
+  const hint = document.getElementById('live-health-hint');
+  const body = document.getElementById('live-health-body');
+  if (!hint || !body) return;
+  if (!liveHealthState) {
+    hint.textContent = 'Live health unavailable.';
+    body.innerHTML = '';
+    return;
+  }
+  const readiness = liveHealthState.readiness || 'degraded';
+  const readinessLabel = formatLiveHealthState(readiness === 'ready' ? 'ready' : readiness);
+  const guidance = Array.isArray(liveHealthState.guidance) ? liveHealthState.guidance : [];
+  const channels = Array.isArray(liveHealthState.channels) ? liveHealthState.channels : [];
+  hint.innerHTML = `Server readiness: <span class="${readinessLabel.cls}">${esc(readinessLabel.label)}</span>${liveHealthState.is_elevated ? ' · elevated server session' : ' · standard privileges'}`;
+  body.innerHTML = `
+    <div class="live-health-grid">
+      <div class="mini-stat">
+        <div class="mini-stat-value ${liveHealthState.is_elevated ? 'health-state-ok' : 'health-state-warn'}">${liveHealthState.is_elevated ? 'Admin' : 'Standard'}</div>
+        <div class="mini-stat-label">Server Token</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value ${liveHealthState.pywin32_available ? 'health-state-ok' : 'health-state-bad'}">${liveHealthState.pywin32_available ? 'Ready' : 'Missing'}</div>
+        <div class="mini-stat-label">pywin32 Runtime</div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-value ${readinessLabel.cls}">${liveHealthState.readable_channel_count || 0}/${(liveHealthState.recommended_channels || []).length}</div>
+        <div class="mini-stat-label">Readable Channels</div>
+      </div>
+    </div>
+    <div class="health-channel-list">
+      ${channels.map(item => {
+        const state = formatLiveHealthState(item.status);
+        return `<div class="health-channel-row">
+          <div>
+            <div style="font-weight:600">${esc(item.channel || '')}</div>
+            <div class="${state.cls}" style="font-size:12px">${esc(state.label)}</div>
+          </div>
+          <div class="health-channel-meta">${esc(item.message || (item.readable ? 'Channel query succeeded' : 'No detail available'))}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${guidance.length ? `<ul class="health-guidance">${guidance.map(line => `<li>${esc(line)}</li>`).join('')}</ul>` : ''}
+  `;
+}
+
+async function loadLiveHealth(force = false) {
+  const body = document.getElementById('live-health-body');
+  const hint = document.getElementById('live-health-hint');
+  if (!body || !hint || !authState.authenticated) return;
+  if (liveHealthLoaded && !force) {
+    renderLiveHealth();
+    return;
+  }
+  hint.textContent = 'Checking server live-scan readiness...';
+  body.innerHTML = '<div class="subtle-hint">Probing recommended channels and privilege state...</div>';
+  try {
+    liveHealthState = await apiJSON('/api/live/health');
+    liveHealthLoaded = true;
+    renderLiveHealth();
+  } catch (e) {
+    liveHealthState = null;
+    hint.textContent = 'Could not load live scan health.';
+    body.innerHTML = `<div class="subtle-hint" style="color:var(--red)">${esc(e.message || 'Failed to inspect live-scan health.')}</div>`;
+  }
+}
+
+async function savePreferencesPatch(patch, quiet = true) {
+  if (!authState.authenticated) return;
+  userPreferences = Object.assign({}, userPreferences, patch);
+  if (patch.savedQueueViews) savedQueueViews = patch.savedQueueViews;
+  try {
+    const updated = await apiJSON('/api/auth/preferences', {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ preferences: patch }),
+    });
+    userPreferences = Object.assign({
+      landingPage: 'dashboard',
+      dashboardFocus: 'mine',
+      themeMode: 'system',
+      dashboardWidgets: defaultDashboardWidgets(),
+      dashboardTemplates: {},
+      activeDashboardTemplate: '',
+      compactDensity: false,
+      tableState: {},
+      savedQueueViews: {},
+    }, updated.preferences || {});
+    savedQueueViews = userPreferences.savedQueueViews || {};
+    renderDashboardTemplateOptions();
+    if (!quiet) notify('Preferences saved.', 'success');
+  } catch (e) {
+    if (!quiet) notify(e.message || 'Failed to save preferences.', 'error');
+  }
+}
+
+async function saveDisplayPreferences() {
+  const { landingPage, dashboardFocus, themeMode, dashboardWidgets, compactDensity } = collectDisplayPreferencePatchFromInputs();
+  const message = document.getElementById('preferences-message');
+  if (message) {
+    message.textContent = 'Saving preferences...';
+    message.style.color = 'var(--text2)';
+  }
+  await savePreferencesPatch({ landingPage, dashboardFocus, themeMode, dashboardWidgets, compactDensity, activeDashboardTemplate: '' }, false);
+  applyUserPreferences();
+  if (currentPage === 'dashboard') renderDashboardFocus(_casesCache);
+  if (message) {
+    message.textContent = 'Preferences saved.';
+    message.style.color = 'var(--green)';
+  }
+}
+
+async function cycleThemePreference() {
+  const order = ['system', 'dark', 'light'];
+  const current = userPreferences.themeMode || 'system';
+  const next = order[(order.indexOf(current) + 1) % order.length];
+  userPreferences = Object.assign({}, userPreferences, { themeMode: next, activeDashboardTemplate: '' });
+  applyThemePreference();
+  if (authState.authenticated) {
+    await savePreferencesPatch({ themeMode: next, activeDashboardTemplate: '' }, false);
+  }
+  notify(`Theme set to ${THEME_LABELS[next]}.`, 'success');
+}
+
+async function saveDashboardTemplate() {
+  const message = document.getElementById('dashboard-template-message');
+  const name = (document.getElementById('dashboard-template-name')?.value || '').trim() || (document.getElementById('dashboard-template-select')?.value || '').trim();
+  if (!name) {
+    if (message) {
+      message.textContent = 'Name the template first.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  const templates = Object.assign({}, getDashboardTemplates());
+  templates[name] = collectDisplayPreferencePatchFromInputs();
+  if (message) {
+    message.textContent = 'Saving template...';
+    message.style.color = 'var(--text2)';
+  }
+  await savePreferencesPatch({ dashboardTemplates: templates, activeDashboardTemplate: name }, false);
+  renderDashboardTemplateOptions();
+  const select = document.getElementById('dashboard-template-select');
+  if (select) select.value = name;
+  if (message) {
+    message.textContent = `Saved template "${name}".`;
+    message.style.color = 'var(--green)';
+  }
+  if (currentPage === 'dashboard') renderDashboardFocus(_casesCache);
+}
+
+async function applyDashboardTemplate() {
+  const select = document.getElementById('dashboard-template-select');
+  const message = document.getElementById('dashboard-template-message');
+  const name = (select?.value || '').trim();
+  const template = getDashboardTemplates()[name];
+  if (!name || !template) {
+    if (message) {
+      message.textContent = 'Choose a template to apply.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  const merged = Object.assign(defaultDashboardTemplate(), template || {});
+  if (document.getElementById('pref-landing-page')) document.getElementById('pref-landing-page').value = merged.landingPage || 'dashboard';
+  if (document.getElementById('pref-dashboard-focus')) document.getElementById('pref-dashboard-focus').value = merged.dashboardFocus || 'mine';
+  if (document.getElementById('pref-theme-mode')) document.getElementById('pref-theme-mode').value = merged.themeMode || 'system';
+  if (document.getElementById('pref-compact-density')) document.getElementById('pref-compact-density').checked = !!merged.compactDensity;
+  const widgets = new Set(Array.isArray(merged.dashboardWidgets) && merged.dashboardWidgets.length ? merged.dashboardWidgets : defaultDashboardWidgets());
+  if (document.getElementById('widget-landing-board')) document.getElementById('widget-landing-board').checked = widgets.has('landing-board');
+  if (document.getElementById('widget-review-focus')) document.getElementById('widget-review-focus').checked = widgets.has('review-focus');
+  if (document.getElementById('widget-priority-watch')) document.getElementById('widget-priority-watch').checked = widgets.has('priority-watch');
+  if (document.getElementById('widget-recent-jobs')) document.getElementById('widget-recent-jobs').checked = widgets.has('recent-jobs');
+  await savePreferencesPatch(Object.assign({}, merged, { activeDashboardTemplate: name }), false);
+  applyUserPreferences();
+  if (currentPage === 'dashboard') renderDashboardFocus(_casesCache);
+  if (message) {
+    message.textContent = `Applied template "${name}".`;
+    message.style.color = 'var(--green)';
+  }
+}
+
+async function deleteDashboardTemplate() {
+  const select = document.getElementById('dashboard-template-select');
+  const message = document.getElementById('dashboard-template-message');
+  const name = (select?.value || '').trim();
+  if (!name || !getDashboardTemplates()[name]) {
+    if (message) {
+      message.textContent = 'Choose a template to delete.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  const templates = Object.assign({}, getDashboardTemplates());
+  delete templates[name];
+  const patch = { dashboardTemplates: templates };
+  if ((userPreferences.activeDashboardTemplate || '') === name) patch.activeDashboardTemplate = '';
+  await savePreferencesPatch(patch, false);
+  renderDashboardTemplateOptions();
+  if (select) select.value = '';
+  if (message) {
+    message.textContent = `Deleted template "${name}".`;
+    message.style.color = 'var(--green)';
+  }
+  if (currentPage === 'dashboard') renderDashboardFocus(_casesCache);
+}
+
+async function changeOwnPassword() {
+  const currentPassword = document.getElementById('pref-current-password')?.value || '';
+  const newPassword = document.getElementById('pref-new-password')?.value || '';
+  const confirmPassword = document.getElementById('pref-confirm-password')?.value || '';
+  const message = document.getElementById('password-message');
+  if (message) {
+    message.textContent = '';
+    message.style.color = 'var(--text2)';
+  }
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    if (message) {
+      message.textContent = 'Fill in all password fields first.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    if (message) {
+      message.textContent = 'New password and confirmation do not match.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  if (message) {
+    message.textContent = 'Updating password...';
+    message.style.color = 'var(--text2)';
+  }
+  try {
+    await apiJSON('/api/auth/change-password', {
+      method: 'POST',
+      suppressAuthRedirect: true,
+      headers: authHeaders(),
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    ['pref-current-password','pref-new-password','pref-confirm-password'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    if (message) {
+      message.textContent = 'Password updated. Your session has been refreshed.';
+      message.style.color = 'var(--green)';
+    }
+    notify('Password updated successfully.', 'success');
+    await refreshSession();
+  } catch (e) {
+    if (message) {
+      message.textContent = e.message || 'Failed to update password.';
+      message.style.color = 'var(--red)';
+    }
+    notify(e.message || 'Failed to update password.', 'error');
+  }
+}
+
+function getAuditFilterState() {
+  return {
+    action: document.getElementById('audit-action')?.value || '',
+    actor: (document.getElementById('audit-actor')?.value || '').trim(),
+    target: (document.getElementById('audit-target')?.value || '').trim(),
+    search: (document.getElementById('audit-search')?.value || '').trim(),
+  };
+}
+
+function clearAuditFilters() {
+  if (document.getElementById('audit-action')) document.getElementById('audit-action').value = '';
+  if (document.getElementById('audit-actor')) document.getElementById('audit-actor').value = '';
+  if (document.getElementById('audit-target')) document.getElementById('audit-target').value = '';
+  if (document.getElementById('audit-search')) document.getElementById('audit-search').value = '';
+  loadAuditEvents();
+}
+
+async function loadAuditEvents() {
+  const list = document.getElementById('audit-list');
+  const meta = document.getElementById('audit-meta');
+  if (!list) return;
+  list.innerHTML = '<div class="loading-state">Loading audit events...</div>';
+  if (meta) meta.textContent = 'Loading audit activity...';
+  try {
+    const filters = getAuditFilterState();
+    const params = new URLSearchParams({ limit: '60' });
+    if (filters.action) params.set('action', filters.action);
+    if (filters.actor) params.set('actor_username', filters.actor);
+    if (filters.target) params.set('target_username', filters.target);
+    if (filters.search) params.set('search', filters.search);
+    const data = await apiJSON('/api/auth/audit?' + params.toString());
+    const events = Array.isArray(data.events) ? data.events : [];
+    if (meta) {
+      const filterParts = [
+        filters.action ? `action=${filters.action}` : '',
+        filters.actor ? `actor=${filters.actor}` : '',
+        filters.target ? `target=${filters.target}` : '',
+        filters.search ? `search=${filters.search}` : '',
+      ].filter(Boolean);
+      meta.textContent = filterParts.length
+        ? `${events.length} event(s) · filtered by ${filterParts.join(' · ')}`
+        : `${events.length} recent event(s)`;
+    }
+    list.innerHTML = events.length ? events.map(renderAuditEvent).join('') : '<div class="empty-state">No admin audit events yet.</div>';
+  } catch (e) {
+    if (meta) meta.textContent = 'Audit activity unavailable';
+    list.innerHTML = '<div class="empty-state">Failed to load audit events.</div>';
+  }
+}
+
+async function downloadAuditExport(format) {
+  const filters = getAuditFilterState();
+  const params = new URLSearchParams({ limit: '500', format: format || 'csv' });
+  if (filters.action) params.set('action', filters.action);
+  if (filters.actor) params.set('actor_username', filters.actor);
+  if (filters.target) params.set('target_username', filters.target);
+  if (filters.search) params.set('search', filters.search);
+  try {
+    const response = await apiFetch('/api/auth/audit/export?' + params.toString(), {
+      suppressAuthRedirect: true,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to export audit activity.');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const suffix = (format || 'csv').toLowerCase() === 'json' ? 'json' : 'csv';
+    link.href = url;
+    link.download = `triage-auth-audit.${suffix}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify(`Downloaded audit export (${suffix.toUpperCase()}).`, 'success');
+  } catch (e) {
+    notify(e.message || 'Failed to export audit activity.', 'error');
+  }
+}
+
+async function downloadReviewHistoryExport(format, caseName = '', itemType = '', itemId = '') {
+  const params = new URLSearchParams({ limit: '1000', format: format || 'csv' });
+  if (caseName) params.set('case_name', caseName);
+  if (itemType) params.set('item_type', itemType);
+  if (itemId) params.set('item_id', itemId);
+  try {
+    const response = await apiFetch('/api/review/history/export?' + params.toString(), {
+      suppressAuthRedirect: true,
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to export review history.');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const suffix = (format || 'csv').toLowerCase() === 'json' ? 'json' : 'csv';
+    link.href = url;
+    link.download = caseName && itemId
+      ? `triage-review-history-${caseName}-${itemType}-${itemId}.${suffix}`
+      : `triage-review-history.${suffix}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify(`Downloaded review history (${suffix.toUpperCase()}).`, 'success');
+  } catch (e) {
+    notify(e.message || 'Failed to export review history.', 'error');
+  }
+}
+
+function renderAuditEvent(event) {
+  const details = event.details || {};
+  const detailText = Object.keys(details).length ? Object.entries(details).map(([k, v]) => `${k}: ${typeof v === 'boolean' ? (v ? 'yes' : 'no') : v}`).join(' · ') : 'No extra details';
+  return `<div class="audit-item">
+    <div class="detail-title-row" style="margin-bottom:6px">
+      <span class="audit-chip">${esc(event.action || 'event')}</span>
+      <div class="audit-title" style="margin-bottom:0">${esc(event.target_username || 'system')}</div>
+    </div>
+    <div class="audit-meta">Actor: ${esc(event.actor_username || 'system')} · ${(event.created_at || '').slice(0,16).replace('T',' ')}</div>
+    <div class="user-subtle" style="margin-top:6px">${esc(detailText)}</div>
+  </div>`;
+}
+
+async function loadUsers() {
+  const list = document.getElementById('users-list');
+  if (!list) return;
+  list.innerHTML = '<div class="loading-state">Loading users...</div>';
+  try {
+    const data = await apiJSON('/api/auth/users');
+    const users = Array.isArray(data.users) ? data.users : [];
+    list.innerHTML = users.length ? users.map(user => `
+      <div class="user-row">
+        <div class="user-meta">
+          <div class="user-name">${esc(user.username)}</div>
+          <div class="user-subtle">Role: ${esc(user.role)} · Status: ${user.active ? 'active' : 'disabled'} · Last login: ${user.last_login_at ? esc(user.last_login_at.slice(0,16).replace('T',' ')) : 'never'}</div>
+        </div>
+        <div class="user-actions">
+          <div class="session-pill role-${esc(user.role)}">${esc(user.role)}</div>
+          <select class="inline-select" id="role-${esc(user.username)}">
+            ${['admin','analyst','viewer'].map(role => `<option value="${role}"${user.role===role?' selected':''}>${role}</option>`).join('')}
+          </select>
+          <button class="btn btn-sm btn-ghost" onclick='saveUserRole(${jsv(user.username)})' ${authState.user?.username === user.username ? 'disabled' : ''}>Save Role</button>
+          <button class="btn btn-sm btn-ghost" onclick='toggleUserActive(${jsv(user.username)}, ${user.active ? 'false' : 'true'})' ${authState.user?.username === user.username ? 'disabled' : ''}>${user.active ? 'Disable' : 'Enable'}</button>
+          <button class="btn btn-sm btn-ghost" onclick='resetUserPassword(${jsv(user.username)})'>Reset Password</button>
+        </div>
+      </div>
+    `).join('') : '<div class="empty-state">No users created yet.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">Failed to load users.</div>';
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById('new-user-username')?.value?.trim() || '';
+  const password = document.getElementById('new-user-password')?.value || '';
+  const role = document.getElementById('new-user-role')?.value || 'analyst';
+  const message = document.getElementById('user-admin-message');
+  if (!username || !password) {
+    if (message) {
+      message.textContent = 'Username and password are required.';
+      message.style.color = 'var(--red)';
+    }
+    return;
+  }
+  if (message) {
+    message.textContent = 'Creating user...';
+    message.style.color = 'var(--text2)';
+  }
+  try {
+    await apiJSON('/api/auth/users', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ username, password, role }),
+    });
+    document.getElementById('new-user-username').value = '';
+    document.getElementById('new-user-password').value = '';
+    if (message) {
+      message.textContent = `Created ${username}.`;
+      message.style.color = 'var(--green)';
+    }
+    notify(`Created ${role} account ${username}.`, 'success');
+    loadUsers();
+    loadAuditEvents();
+  } catch (e) {
+    if (message) {
+      message.textContent = e.message || 'Failed to create user.';
+      message.style.color = 'var(--red)';
+    }
+  }
+}
+
+async function updateUserRecord(username, payload, successMessage) {
+  const message = document.getElementById('user-admin-message');
+  if (message) {
+    message.textContent = 'Applying user update...';
+    message.style.color = 'var(--text2)';
+  }
+  try {
+    await apiJSON(`/api/auth/users/${encodeURIComponent(username)}`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (message) {
+      message.textContent = successMessage;
+      message.style.color = 'var(--green)';
+    }
+    notify(successMessage, 'success');
+    loadUsers();
+    loadAuditEvents();
+    if (authState.user?.username === username) refreshSession();
+  } catch (e) {
+    if (message) {
+      message.textContent = e.message || 'Failed to update user.';
+      message.style.color = 'var(--red)';
+    }
+    notify(e.message || 'Failed to update user.', 'error');
+  }
+}
+
+function saveUserRole(username) {
+  const select = document.getElementById(`role-${username}`);
+  if (!select) return;
+  updateUserRecord(username, { role: select.value }, `Updated ${username} to ${select.value}.`);
+}
+
+function toggleUserActive(username, shouldEnable) {
+  const action = shouldEnable ? 'enable' : 'disable';
+  if (!confirm(`${action === 'enable' ? 'Enable' : 'Disable'} ${username}?`)) return;
+  updateUserRecord(username, { active: !!shouldEnable }, `${shouldEnable ? 'Enabled' : 'Disabled'} ${username}.`);
+}
+
+function resetUserPassword(username) {
+  const newPassword = prompt(`Set a new password for ${username}:`);
+  if (!newPassword) return;
+  updateUserRecord(username, { password: newPassword }, `Reset password for ${username}.`);
+}
+
+function getQueueFilterState() {
+  const ownerInput = document.getElementById('q-owner');
+  const ownerValue = ownerInput ? ownerInput.value.trim() : '';
+  return {
+    status: document.getElementById('q-status')?.value || '',
+    item_type: document.getElementById('q-type')?.value || '',
+    owner: ownerValue,
+    disposition: document.getElementById('q-disposition')?.value || '',
+    actionable_only: !!document.getElementById('q-actionable-only')?.checked,
+    sort: document.getElementById('queue-sort')?.value || tableState.queue.sort,
+  };
+}
+
+function applyQueueFilterState(state = {}) {
+  if (document.getElementById('q-status')) document.getElementById('q-status').value = state.status || '';
+  if (document.getElementById('q-type')) document.getElementById('q-type').value = state.item_type || '';
+  if (document.getElementById('q-owner')) document.getElementById('q-owner').value = state.owner || '';
+  if (document.getElementById('q-disposition')) document.getElementById('q-disposition').value = state.disposition || '';
+  if (document.getElementById('q-actionable-only')) document.getElementById('q-actionable-only').checked = state.actionable_only !== undefined ? !!state.actionable_only : true;
+  if (document.getElementById('queue-sort')) document.getElementById('queue-sort').value = state.sort || 'updated_desc';
+}
+
+function renderSavedQueueViews() {
+  const select = document.getElementById('queue-saved-views');
+  if (!select) return;
+  const options = ['<option value="">Choose a saved view</option>']
+    .concat(Object.keys(savedQueueViews).sort().map(name => `<option value="${esc(name)}">${esc(name)}</option>`));
+  select.innerHTML = options.join('');
+}
+
+function saveQueueViewsToStorage() {
+  savePreferencesPatch({ savedQueueViews });
+}
+
+function saveQueueView() {
+  const name = document.getElementById('queue-view-name')?.value?.trim();
+  if (!name) {
+    notify('Give the view a short name first.', 'error');
+    return;
+  }
+  savedQueueViews[name] = getQueueFilterState();
+  saveQueueViewsToStorage();
+  renderSavedQueueViews();
+  document.getElementById('queue-saved-views').value = name;
+  notify(`Saved queue view "${name}".`, 'success');
+}
+
+function applySavedQueueView(name) {
+  if (!name || !savedQueueViews[name]) return;
+  applyQueueFilterState(savedQueueViews[name]);
+  notify(`Applied queue view "${name}".`, 'info');
+  loadQueue();
+}
+
+function deleteSavedQueueView() {
+  const select = document.getElementById('queue-saved-views');
+  const name = select?.value || '';
+  if (!name || !savedQueueViews[name]) {
+    notify('Choose a saved view to delete.', 'error');
+    return;
+  }
+  delete savedQueueViews[name];
+  saveQueueViewsToStorage();
+  renderSavedQueueViews();
+  document.getElementById('queue-view-name').value = '';
+  notify(`Deleted queue view "${name}".`, 'success');
+}
+
+function applyQueueShortcut(kind) {
+  if (kind === 'mine') {
+    if (!getReviewerName()) {
+      notify('Sign in first to load your queue.', 'error');
+      return;
+    }
+    applyQueueFilterState({ owner: getReviewerName(), actionable_only: true, sort: 'updated_desc' });
+  } else if (kind === 'unassigned') {
+    applyQueueFilterState({ owner: '@unassigned', actionable_only: true, sort: 'priority_asc' });
+  } else if (kind === 'escalated') {
+    applyQueueFilterState({ status: 'Escalated', actionable_only: true, sort: 'priority_asc' });
+  } else if (kind === 'priority') {
+    applyQueueFilterState({ status: 'Open', item_type: 'incident', actionable_only: true, sort: 'priority_asc' });
+  }
+  loadQueue();
+}
+
+function clearQueueFilters() {
+  applyQueueFilterState({ status: '', item_type: '', owner: '', disposition: '', actionable_only: true, sort: 'updated_desc' });
+  document.getElementById('queue-saved-views').value = '';
+  loadQueue();
+}
+
+function syncQueueActionableWithStatus() {
+  const status = document.getElementById('q-status')?.value || '';
+  const actionable = document.getElementById('q-actionable-only');
+  if (!actionable) return;
+  if (status === 'Closed' || status === 'Suppressed') actionable.checked = false;
+}
+
+function handleQueueActionableToggle() {
+  const actionable = !!document.getElementById('q-actionable-only')?.checked;
+  const statusEl = document.getElementById('q-status');
+  if (actionable && statusEl && (statusEl.value === 'Closed' || statusEl.value === 'Suppressed')) {
+    statusEl.value = '';
+  }
+  loadQueue();
+}
+
+function changePageSize(key, value) {
+  tableState[key].pageSize = Number(value) || 15;
+  tableState[key].page = 1;
+  savePreferencesPatch({ tableState: { cases: tableState.cases, queue: tableState.queue, jobs: tableState.jobs } });
+  if (key === 'cases') updateCasesView();
+  if (key === 'queue') updateQueueView();
+  if (key === 'jobs') updateJobsView();
+}
+
+function renderPagination(key, totalItems, renderedCount) {
+  const state = tableState[key];
+  const totalPages = Math.max(1, Math.ceil(totalItems / state.pageSize));
+  if (state.page > totalPages) state.page = totalPages;
+  const container = document.getElementById(`${key}-pagination`);
+  if (!container) return;
+  container.innerHTML = `
+    <div class="toolbar-meta">Showing ${renderedCount} of ${totalItems} item(s)</div>
+    <div class="pagination-controls">
+      <button class="btn btn-sm btn-ghost" ${state.page <= 1 ? 'disabled' : ''} onclick="changePage('${key}', -1)">Previous</button>
+      <span class="pill">Page ${state.page} / ${totalPages}</span>
+      <button class="btn btn-sm btn-ghost" ${state.page >= totalPages ? 'disabled' : ''} onclick="changePage('${key}', 1)">Next</button>
+    </div>
+  `;
+}
+
+function changePage(key, delta) {
+  const state = tableState[key];
+  state.page = Math.max(1, state.page + delta);
+  if (key === 'cases') updateCasesView();
+  if (key === 'queue') updateQueueView();
+  if (key === 'jobs') updateJobsView();
+}
+
+function paginate(items, key) {
+  const state = tableState[key];
+  const totalPages = Math.max(1, Math.ceil(items.length / state.pageSize));
+  if (state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * state.pageSize;
+  return items.slice(start, start + state.pageSize);
+}
+
+function setMeta(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function setButtonLoading(button, isLoading, busyText) {
+  if (!button) return;
+  if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent;
+  button.classList.toggle('is-loading', !!isLoading);
+  button.disabled = !!isLoading;
+  button.textContent = isLoading ? (busyText || 'Working...') : button.dataset.defaultLabel;
+}
+
+function setQueueSort(field) {
+  const current = tableState.queue.sort || 'updated_desc';
+  const isCurrentField = current.startsWith(`${field}_`);
+  const currentDir = current.endsWith('_asc') ? 'asc' : 'desc';
+  const nextDir = isCurrentField ? (currentDir === 'asc' ? 'desc' : 'asc') : (field === 'updated' ? 'desc' : 'asc');
+  tableState.queue.sort = `${field}_${nextDir}`;
+  tableState.queue.page = 1;
+  const sortSelect = document.getElementById('queue-sort');
+  if (sortSelect && Array.from(sortSelect.options).some(opt => opt.value === tableState.queue.sort)) {
+    sortSelect.value = tableState.queue.sort;
+  }
+  updateQueueView();
+}
+
+function refreshQueueSortIndicators() {
+  const sort = tableState.queue.sort || 'updated_desc';
+  ['case', 'status', 'priority', 'updated'].forEach(field => {
+    const btn = document.getElementById(`qsort-${field}`);
+    if (!btn) return;
+    const active = sort.startsWith(`${field}_`);
+    const isAsc = sort.endsWith('_asc');
+    btn.classList.toggle('active', active);
+    const glyph = active ? (isAsc ? '▲' : '▼') : '↕';
+    btn.innerHTML = `${esc(btn.dataset.label || field)} <span aria-hidden="true">${glyph}</span>`;
+    btn.setAttribute('aria-sort', active ? (isAsc ? 'ascending' : 'descending') : 'none');
+  });
+}
+
+function buildQueueSummaryText(items, filterState, actionableOnly) {
+  const parts = [`${items.length} item(s)`];
+  if (actionableOnly) parts.push('actionable only');
+  if (filterState.status) parts.push(`status: ${filterState.status}`);
+  if (filterState.item_type) parts.push(`type: ${filterState.item_type}`);
+  if (filterState.owner) parts.push(`owner: ${filterState.owner}`);
+  if (filterState.disposition) parts.push(`disposition: ${filterState.disposition}`);
+  return parts.join(' · ');
+}
+
+// --- Review Queue ---
+async function loadQueue() {
+  tableState.queue.page = 1;
+  renderTableMessage('queue-table', 9, 'Loading review queue...', 'loading');
+  setMeta('queue-filter-summary', 'Loading queue summary...');
+  const params = new URLSearchParams();
+  const s = document.getElementById('q-status').value; if (s) params.set('status', s);
+  const t = document.getElementById('q-type').value; if (t) params.set('item_type', t);
+  const o = document.getElementById('q-owner').value.trim(); if (o) params.set('owner', o === '@unassigned' ? '__unassigned__' : o);
+  const d = document.getElementById('q-disposition').value; if (d) params.set('disposition', d);
+  try {
+    const items = await apiJSON('/api/review/queue?' + params.toString());
+    _queueCache = Array.isArray(items) ? items : [];
+    updateQueueView();
+  } catch (e) {
+    renderTableMessage('queue-table', 9, 'Failed to load review queue.');
+    setMeta('queue-filter-summary', 'Queue summary unavailable');
+    notify('Failed to load review queue.', 'error');
+  }
+}
+
+function compareQueue(a, b, sort) {
+  if (sort === 'updated_asc') return safeDate(a.updated_at) - safeDate(b.updated_at);
+  if (sort === 'updated_desc') return safeDate(b.updated_at) - safeDate(a.updated_at);
+  if (sort === 'priority_asc') return priorityRank(a.priority) - priorityRank(b.priority) || safeDate(b.updated_at) - safeDate(a.updated_at);
+  if (sort === 'priority_desc') return priorityRank(b.priority) - priorityRank(a.priority) || safeDate(b.updated_at) - safeDate(a.updated_at);
+  if (sort === 'case_asc') return String(a.case_name||'').localeCompare(String(b.case_name||''));
+  if (sort === 'case_desc') return String(b.case_name||'').localeCompare(String(a.case_name||''));
+  if (sort === 'status_asc') return String(a.status||'Open').localeCompare(String(b.status||'Open'));
+  if (sort === 'status_desc') return String(b.status||'Open').localeCompare(String(a.status||'Open'));
+  return safeDate(b.updated_at) - safeDate(a.updated_at);
+}
+
+function updateQueueView() {
+  const tb = document.getElementById('queue-table');
+  const queueStats = document.getElementById('queue-stats');
+  const summaryEl = document.getElementById('queue-filter-summary');
+  const actionableOnly = !!document.getElementById('q-actionable-only')?.checked;
+  const filterState = getQueueFilterState();
+  const items = [..._queueCache].filter(item => !actionableOnly || !['Closed', 'Suppressed'].includes(item.status || 'Open'));
+  tableState.queue.sort = document.getElementById('queue-sort')?.value || tableState.queue.sort;
+  refreshQueueSortIndicators();
+  savePreferencesPatch({ tableState: { cases: tableState.cases, queue: tableState.queue, jobs: tableState.jobs } });
+  if (queueStats) {
+    const counts = {
+      total: items.length,
+      open: items.filter(i => (i.status || 'Open') === 'Open').length,
+      inReview: items.filter(i => i.status === 'In Review').length,
+      escalated: items.filter(i => i.status === 'Escalated').length,
+    };
+    queueStats.style.display = '';
+    queueStats.innerHTML =
+      stat(counts.total, 'Visible Queue Items', '--accent') +
+      stat(counts.open, 'Open', '--blue') +
+      stat(counts.inReview, 'In Review', '--orange') +
+      stat(counts.escalated, 'Escalated', '--red');
+  }
+  if (summaryEl) {
+    summaryEl.textContent = buildQueueSummaryText(items, filterState, actionableOnly);
+  }
+  if (!items.length) {
+    const hasFilters = !!(filterState.status || filterState.item_type || filterState.owner || filterState.disposition);
+    const emptyMessage = hasFilters
+      ? 'No queue items match the current filters.'
+      : 'All clear. No items awaiting review.';
+    renderTableMessage('queue-table', 9, emptyMessage);
+    renderPagination('queue', 0, 0);
+    setMeta('queue-meta', actionableOnly ? 'No actionable review items match the current filters' : 'No review items match the current filters');
+    return;
+  }
+  items.sort((a, b) => compareQueue(a, b, tableState.queue.sort));
+  const paged = paginate(items, 'queue');
+  tb.innerHTML = paged.map(q => `<tr onclick='openReviewItem(${jsv(q.case_name)},${jsv(q.item_type)},${jsv(q.item_id)})'>
+    <td><a href="#" class="table-link" onclick='event.preventDefault();event.stopPropagation();openReviewItem(${jsv(q.case_name)},${jsv(q.item_type)},${jsv(q.item_id)})'>${esc(q.case_name||'')}</a></td>
+    <td><span class="review-chip" style="background:${q.item_type==='incident'?'var(--red)':'var(--orange)'};color:#fff">${q.item_type||''}</span></td>
+    <td style="font-family:monospace;font-size:12px"><a href="#" class="table-link" onclick='event.preventDefault();event.stopPropagation();openReviewItem(${jsv(q.case_name)},${jsv(q.item_type)},${jsv(q.item_id)})'>${esc(q.item_id||'')}</a></td>
+    <td><span class="badge badge-${statusBadge(q.status)}">${esc(q.status||'Open')}</span></td>
+    <td style="font-size:13px">${esc(q.disposition||'-')}</td>
+    <td>${esc(q.owner||'-')}</td>
+    <td>${esc(q.priority||'-')}</td>
+    <td style="color:var(--text2);font-size:12px">${q.updated_at ? q.updated_at.slice(0,16).replace('T',' ') : '-'}</td>
+    <td onclick="event.stopPropagation()">${canReviewMutate() ? `<button class="btn btn-sm btn-ghost" onclick='assignQueueItemToMe(${jsv(q.case_name)},${jsv(q.item_type)},${jsv(q.item_id)},${jsv(q.status || "Open")})'>Assign to me</button>` : `<span style="color:var(--text2);font-size:12px">read-only</span>`}</td>
+  </tr>`).join('');
+  renderPagination('queue', items.length, paged.length);
+  setMeta('queue-meta', buildQueueSummaryText(items, filterState, actionableOnly));
+}
+
+function statusBadge(s) {
+  return (s||'open').toLowerCase().replace(/ /g,'-');
+}
+
+function openReviewItem(caseName, itemType, itemId) {
+  const tab = itemType === 'incident' ? 'incidents' : 'findings';
+  openCase(caseName, { tab, itemType, itemId });
+}
+
+async function assignQueueItemToMe(caseName, itemType, itemId, currentStatus = 'Open') {
+  const reviewer = getReviewerName();
+  if (!reviewer) {
+    notify('Sign in before assigning review ownership.', 'error');
+    return;
+  }
+  if (!canReviewMutate()) {
+    notify('Viewer accounts cannot claim queue items.', 'error');
+    return;
+  }
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  const nextStatus = currentStatus === 'Open' ? 'In Review' : currentStatus;
+  try {
+    await apiJSON(`/api/cases/${encodeURIComponent(caseName)}/${typePlural}/${encodeURIComponent(itemId)}/review`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        owner: reviewer,
+        status: nextStatus,
+        changed_by: reviewer,
+      }),
+    });
+    notify(`Assigned ${itemType} ${itemId} to ${reviewer}.`, 'success');
+    await loadQueue();
+  } catch (e) {
+    notify(e.message || 'Failed to assign queue item.', 'error');
+  }
+}
+
+// --- Case detail ---
+let _caseData = null;
+let _detailTarget = { tab: 'overview', itemType: '', itemId: '' };
+
+async function openCase(name, options = {}) {
+  _detailTarget = {
+    tab: options.tab || 'overview',
+    itemType: options.itemType || '',
+    itemId: options.itemId || '',
+  };
+  document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
+  document.getElementById('page-case-detail').style.display = '';
+  currentPage = 'case-detail';
+  document.getElementById('page-title').textContent = name;
+  document.getElementById('detail-case-name').textContent = name;
+  document.getElementById('detail-tabs').innerHTML = '';
+  document.getElementById('detail-content').innerHTML = '<div class="card"><div class="loading-state"><span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Loading case detail...</span></span></div></div>';
+  document.getElementById('detail-report-link').href = API + '/api/cases/' + encodeURIComponent(name) + '/report';
+  document.getElementById('detail-delete-btn').onclick = async () => {
+    if (confirm('Delete case ' + name + '?')) {
+      try {
+        await apiJSON('/api/cases/' + encodeURIComponent(name), { method:'DELETE' });
+        notify(`Deleted case ${name}.`, 'success');
+        showPage('dashboard');
+      } catch (e) {
+        notify(e.message || `Failed to delete ${name}.`, 'error');
+      }
+    }
+  };
+
+  try {
+    const data = await apiJSON('/api/cases/' + encodeURIComponent(name));
+    let runStatus = null;
+    try {
+      runStatus = await apiJSON('/api/cases/' + encodeURIComponent(name) + '/status', {}, true);
+    } catch (_ignored) {
+      runStatus = null;
+    }
+    data._run_status = runStatus;
+    _caseData = data;
+    const cs = data.case || {};
+    const sm = data.summary || {};
+
+    document.getElementById('detail-stats').innerHTML =
+      stat(cs.response_priority || 'P4', 'Priority', cs.response_priority === 'P1' ? '--red' : cs.response_priority === 'P2' ? '--orange' : '--blue') +
+      stat(sm.signal_count || 0, 'Signals', '--accent') +
+      stat(sm.finding_count || 0, 'Findings', '--orange') +
+      stat(sm.incident_count || 0, 'Incidents', '--red');
+
+    const tabs = ['Overview', 'Incidents', 'Findings', 'Summary', 'Brief'];
+    document.getElementById('detail-tabs').innerHTML = tabs.map((t,i) => {
+      const tabName = t.toLowerCase();
+      const isActive = _detailTarget.tab ? _detailTarget.tab === tabName : i === 0;
+      return `<button class="detail-tab ${isActive?'active':''}" onclick='showDetailTab(${jsv(tabName)},this,${jsv(name)})'>${t}</button>`;
+    }).join('');
+
+    showDetailTabContent(_detailTarget.tab || 'overview', name, data);
+  } catch(e) {
+    const message = e?.message || 'Case artifacts are unavailable.';
+    document.getElementById('detail-content').innerHTML = `
+      <div class="card">
+        <div class="card-title">Case Unavailable</div>
+        <div class="empty-state" style="text-align:left;padding:12px 0 0">This job still exists in history, but its case artifacts are no longer available.</div>
+        <div class="user-subtle" style="margin-top:10px">${esc(message)}</div>
+        <div class="auth-actions" style="margin-top:16px">
+          <button class="btn btn-sm btn-ghost" onclick="showPage('jobs')">Back to jobs</button>
+          <button class="btn btn-sm btn-ghost" onclick="showPage('dashboard')">Back to dashboard</button>
+        </div>
+      </div>`;
+    notify(`Could not open case ${name}.`, 'error');
+  }
+}
+
+function showDetailTab(tab, btn, name) {
+  _detailTarget = { tab, itemType: '', itemId: '' };
+  document.querySelectorAll('.detail-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (_caseData) {
+    showDetailTabContent(tab, name, _caseData);
+  } else {
+    document.getElementById('detail-content').innerHTML = '<div class="card"><div class="loading-state"><span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Loading case content...</span></span></div></div>';
+    apiJSON('/api/cases/' + encodeURIComponent(name)).then(async data => {
+      try {
+        data._run_status = await apiJSON('/api/cases/' + encodeURIComponent(name) + '/status', {}, true);
+      } catch (_ignored) {
+        data._run_status = null;
+      }
+      _caseData = data;
+      showDetailTabContent(tab, name, data);
+    }).catch(() => {
+      document.getElementById('detail-content').innerHTML = '<div class="card"><div class="empty-state">Failed to load case content.</div></div>';
+    });
+  }
+}
+
+function showDetailTabContent(tab, name, data) {
+  const el = document.getElementById('detail-content');
+  const cs = data.case || {};
+  const sm = data.summary || {};
+  const runStatus = data._run_status || {};
+  const runMeta = runStatus.metadata || {};
+  const stageTimings = runMeta.stage_timings || {};
+  const detectorTimings = runMeta.detector_timings || {};
+  const detectorTimingList = summarizeDetectorTimings(detectorTimings);
+  const stageTimingRows = [
+    ['Parse', stageTimings.parse_ms],
+    ['Detect', stageTimings.detect_ms],
+    ['Suppress', stageTimings.suppress_ms],
+    ['Correlate', stageTimings.correlate_ms],
+    ['Report', stageTimings.report_ms],
+    ['Total', stageTimings.total_ms],
+  ];
+
+  if (tab === 'overview') {
+    const cq = cs.collection_quality_summary || {};
+    const review = summarizeReviewState(data.findings || [], data.incidents || []);
+    const campaign = cs.campaign_summary || [];
+    const nextActions = cq.recommendations || [];
+    const workbench = [
+      review.escalated ? `${review.escalated} escalated item(s) need senior review.` : '',
+      review.open ? `${review.open} open item(s) still need first-pass triage.` : '',
+      review.withOwner ? `${review.withOwner} item(s) already have an owner.` : 'No items are assigned yet.',
+      canReviewMutate() ? 'Use Findings and Incidents tabs to update review state directly in place.' : 'Viewer mode is read-only. Ask an analyst or admin to make review updates.',
+    ].filter(Boolean);
+    el.innerHTML = `<div class="panel-stack">
+      <div class="case-status-banner">
+        <div class="banner-title">${esc(cs.case_name || name)} · ${esc(cs.response_priority || 'P4')}</div>
+        <div class="banner-copy">Signals: ${sm.signal_count || 0} · Findings: ${sm.finding_count || 0} · Incidents: ${sm.incident_count || 0}. ${esc(cq.summary || 'Collection quality metadata is available for this case.')}</div>
+        <div class="detail-chip-row">
+          <span class="detail-chip">Primary host: ${esc(cs.primary_host || 'unknown')}</span>
+          <span class="detail-chip">Primary user: ${esc(cs.primary_user || 'unknown')}</span>
+          <span class="detail-chip">Observed source: ${esc(cs.primary_source_ip || 'none')}</span>
+        </div>
+      </div>
+      <div class="detail-overview-grid">
+      <div class="card card-soft">
+        <div class="card-title">Case Overview</div>
+        <table class="detail-fact-table">
+          <tr><td>Input Source</td><td>${esc(cs.input_source_display || displayInputSource(cs.input_source || ''))}</td></tr>
+          <tr><td>Primary Host</td><td>${esc(cs.primary_host||'')}</td></tr>
+          <tr><td>Primary User</td><td>${esc(cs.primary_user||'')}</td></tr>
+          <tr><td>Primary Source IP</td><td>${esc(cs.primary_source_ip||'') || '-'}</td></tr>
+          <tr><td>Time Range</td><td>${esc(cs.first_seen||'')} &mdash; ${esc(cs.last_seen||'')}</td></tr>
+          <tr><td>Hosts</td><td>${(cs.hosts||[]).join(', ')||'-'}</td></tr>
+          <tr><td>Users</td><td>${(cs.users||[]).slice(0,10).join(', ')||'-'}</td></tr>
+        </table>
+      </div>
+      <div class="card card-soft">
+        <div class="card-title">Collection Quality</div>
+        <div class="section-kicker">${esc(cq.summary || 'Collection metadata available for this case.')}</div>
+        <table class="detail-fact-table">
+          <tr><td>Source Count</td><td>${cq.source_count ?? '-'}</td></tr>
+          <tr><td>Parsed Events</td><td>${cq.parsed_event_count ?? '-'}</td></tr>
+          <tr><td>Warnings</td><td>${cq.warning_count ?? 0}</td></tr>
+          <tr><td>Telemetry Present</td><td>${(cq.telemetry_present||[]).join(', ')||'None'}</td></tr>
+          <tr><td>Telemetry Missing</td><td style="color:var(--orange)">${(cq.telemetry_missing||[]).join(', ')||'None'}</td></tr>
+        </table>
+      </div>
+      <div class="card card-soft">
+        <div class="card-title">Pipeline Timing</div>
+        <div class="section-kicker">Captured from run status metadata for this investigation.</div>
+        <table class="detail-fact-table">
+          ${stageTimingRows.map(([label, value]) => `<tr><td>${esc(label)}</td><td>${esc(formatTiming(value))}</td></tr>`).join('')}
+        </table>
+        <div class="section-kicker" style="margin-top:12px">Slowest detectors</div>
+        ${renderMiniList(detectorTimingList, 'No detector timing data available.')}
+      </div>
+      <div class="card card-soft">
+        <div class="card-title">Review Snapshot</div>
+        <div class="stats" style="margin-bottom:0">
+          ${stat(review.open, 'Open', '--blue')}
+          ${stat(review.inReview, 'In Review', '--orange')}
+          ${stat(review.escalated, 'Escalated', '--red')}
+          ${stat(review.withOwner, 'Owned', '--green')}
+        </div>
+      </div>
+      <div class="card card-soft">
+        <div class="card-title">Workflow Guide</div>
+        <div class="section-kicker">Where to focus next in this case</div>
+        ${renderMiniList(workbench, 'No active workflow recommendations.')}
+      </div>
+      <div class="card card-soft">
+        <div class="card-title">Analyst Context</div>
+        <div class="section-kicker">Campaign Summary</div>
+        ${renderMiniList(campaign, 'No multi-host campaign overlaps identified.')}
+        <div class="section-kicker" style="margin-top:16px">Recommended Next Actions</div>
+        ${renderMiniList(nextActions, 'No additional analyst actions recommended.')}
+      </div>
+      </div>
+    </div>`;
+  } else if (tab === 'incidents') {
+    const incs = data.incidents || [];
+    if (!incs.length) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;color:var(--text2)">No incidents in this case.</div>'; return; }
+    el.innerHTML = incs.map(inc => {
+      const rv = inc.review || {};
+      return `<div class="card detail-card" id="${domId('incident', inc.id)}">
+      <div class="detail-card-header">
+        <div class="detail-card-copy">
+          <div class="detail-title-row" style="font-weight:700;font-size:16px">${esc(inc.display_label||'')} ${esc(inc.title||'')}
+          ${rv.status ? ` <span class="badge badge-${statusBadge(rv.status)}">${esc(rv.status)}</span>` : ''}
+          ${rv.disposition ? ` <span class="review-chip" style="background:var(--surface2)">${esc(rv.disposition)}</span>` : ''}
+        </div>
+          <div class="detail-summary">${esc(inc.summary||'')}</div>
+          <div class="detail-meta-line"><b>Why flagged:</b> ${esc(inc.why_flagged||'Correlated suspicious behavior')}</div>
+          <div class="detail-chip-row">
+            <span class="detail-chip">MITRE: ${esc(inc.mitre_tactic||'-')} / ${esc(inc.mitre_technique||'-')}</span>
+            <span class="detail-chip">Severity: ${esc(inc.severity||'unknown')}</span>
+            <span class="detail-chip">Confidence: ${inc.confidence_score||0}%</span>
+          </div>
+        </div>
+        <div><span class="badge badge-${(inc.severity||'').toLowerCase()==='critical'?'p1':(inc.severity||'').toLowerCase()==='high'?'p2':'p3'}">${esc(inc.severity||'')} / ${inc.confidence_score||0}%</span></div>
+      </div>
+      ${inc.containment_guidance?.length ? `<div style="font-size:13px;color:var(--orange);margin-top:6px"><b>Containment:</b> ${inc.containment_guidance.map(esc).join('; ')}</div>` : ''}
+      ${renderReviewPanel(name, 'incident', inc.id, rv)}
+    </div>`;
+    }).join('');
+    incs.forEach(inc => loadReviewDetail(name, 'incident', inc.id, reviewPanelPrefix('incident', inc.id)));
+    setTimeout(() => focusDetailTarget('incidents'), 0);
+  } else if (tab === 'findings') {
+    const fnds = data.findings || [];
+    if (!fnds.length) { el.innerHTML = '<div class="card" style="text-align:center;padding:40px;color:var(--text2)">No findings in this case.</div>'; return; }
+    el.innerHTML = fnds.map(f => {
+      const rv = f.review || {};
+      return `<div class="card detail-card" id="${domId('finding', f.id)}">
+      <div class="detail-card-header">
+        <div class="detail-card-copy">
+          <div class="detail-title-row" style="font-weight:700;font-size:16px">${esc(f.display_label||'')} ${esc(f.title||'')}
+          ${rv.status ? ` <span class="badge badge-${statusBadge(rv.status)}">${esc(rv.status)}</span>` : ''}
+          ${rv.disposition ? ` <span class="review-chip" style="background:var(--surface2)">${esc(rv.disposition)}</span>` : ''}
+        </div>
+          <div class="detail-summary">${esc(f.summary||f.description||'')}</div>
+          <div class="detail-chip-row">
+            <span class="detail-chip">Host: ${esc(f.host||'-')}</span>
+            <span class="detail-chip">User: ${esc(f.user||'-')}</span>
+            <span class="detail-chip">Severity: ${esc(f.severity||'unknown')}</span>
+            <span class="detail-chip">Confidence: ${f.confidence_score||0}%</span>
+          </div>
+        </div>
+        <div><span class="badge badge-${(f.severity||'').toLowerCase()==='critical'?'p1':(f.severity||'').toLowerCase()==='high'?'p2':'p3'}">${esc(f.severity||'')} / ${f.confidence_score||0}%</span></div>
+      </div>
+      ${renderReviewPanel(name, 'finding', f.id, rv)}
+    </div>`;
+    }).join('');
+    fnds.forEach(f => loadReviewDetail(name, 'finding', f.id, reviewPanelPrefix('finding', f.id)));
+    setTimeout(() => focusDetailTarget('findings'), 0);
+  } else if (tab === 'summary') {
+    el.innerHTML = '<div class="card"><div class="loading-state"><span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Loading summary...</span></span></div></div>';
+    apiJSON('/api/cases/' + encodeURIComponent(name) + '/summary').then(d => {
+      el.innerHTML = `<div class="pre-block">${esc(d.summary||'')}</div>`;
+    }).catch(() => {
+      el.innerHTML = '<div class="card"><div class="empty-state">Failed to load summary.</div></div>';
+    });
+  } else if (tab === 'brief') {
+    el.innerHTML = '<div class="card"><div class="loading-state"><span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Loading incident brief...</span></span></div></div>';
+    apiJSON('/api/cases/' + encodeURIComponent(name) + '/brief').then(d => {
+      el.innerHTML = `<div class="pre-block">${esc(d.brief||'')}</div>`;
+    }).catch(() => {
+      el.innerHTML = '<div class="card"><div class="empty-state">Failed to load incident brief.</div></div>';
+    });
+  }
+}
+
+function focusDetailTarget(tab) {
+  if (!_detailTarget.itemId || _detailTarget.tab !== tab) return;
+  const prefix = _detailTarget.itemType === 'incident' ? 'incident' : 'finding';
+  const target = document.getElementById(domId(prefix, _detailTarget.itemId));
+  if (!target) return;
+  target.classList.add('focused');
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => target.classList.remove('focused'), 2400);
+}
+
+// --- Review panel renderer ---
+function renderReviewPanel(caseName, itemType, itemId, rv) {
+  if (!itemId) return '';
+  const pfx = reviewPanelPrefix(itemType, itemId);
+  const statuses = reviewEnums.statuses || ['Open','In Review','Escalated','Closed','Suppressed'];
+  const dispositions = reviewEnums.dispositions || ['True Positive','False Positive','Benign Expected Activity','Suspicious - Needs More Investigation','Test / Lab Activity','Duplicate'];
+  const ownerValue = rv.owner || getReviewerName();
+  const reviewStatus = String(rv.status || 'Open');
+  const collapsedByDefault = reviewStatus === 'Closed' || reviewStatus === 'Suppressed';
+  const toggleLabel = collapsedByDefault ? 'Expand Review' : 'Collapse Review';
+  const disabled = canReviewMutate() ? '' : ' disabled';
+  const hint = canReviewMutate() ? '' : '<div style="font-size:11px;color:var(--text2);margin-bottom:8px">Viewer access: review edits are read-only.</div>';
+  return `<div class="review-panel${collapsedByDefault ? ' is-collapsed' : ''}" id="${pfx}-panel" data-case-name="${esc(caseName)}" data-item-type="${esc(itemType)}" data-item-id="${esc(itemId)}">
+    <div class="review-panel-header">
+      <div class="rp-title">Analyst Review</div>
+      <button class="btn btn-sm btn-ghost" id="${pfx}-toggle" onclick='toggleReviewPanel(${jsv(pfx)})'>${toggleLabel}</button>
+    </div>
+    <div class="review-panel-body" id="${pfx}-body"${collapsedByDefault ? ' style="display:none"' : ''}>
+    ${hint}
+    <div class="review-grid">
+      <div class="input-group"><label>Status</label>
+        <select class="input" id="${pfx}-status"${disabled}>${statuses.map(s=>`<option${rv.status===s?' selected':''}>${s}</option>`).join('')}</select>
+      </div>
+      <div class="input-group"><label>Disposition</label>
+        <select class="input" id="${pfx}-disp"${disabled}><option value="">--</option>${dispositions.map(d=>`<option${rv.disposition===d?' selected':''}>${d}</option>`).join('')}</select>
+      </div>
+      <div class="input-group"><label>Owner / Reviewer</label>
+        <input class="input" id="${pfx}-owner" value="${esc(ownerValue||'')}" placeholder="e.g. analyst1"${disabled}>
+      </div>
+      <div class="input-group"><label>Priority</label>
+        <input class="input" id="${pfx}-pri" value="${esc(rv.priority||'')}" placeholder="e.g. P1, P2"${disabled}>
+      </div>
+    </div>
+    <div class="input-group"><label>Recommended Tuning Action</label>
+      <input class="input" id="${pfx}-tuning" value="${esc(rv.recommended_tuning_action||'')}" placeholder="e.g. Suppress rule for this host"${disabled}>
+    </div>
+    <div class="review-actions">
+      <button class="btn btn-sm btn-primary" id="${pfx}-save-btn" onclick='saveReview(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)})'${disabled}>Save Review</button>
+      <button class="btn btn-sm btn-ghost" onclick='assignToMe(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)})'${disabled}>Assign to Me</button>
+      <button class="btn btn-sm btn-ghost" onclick='quickAction(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)},${jsv("In Review")})'${disabled}>Mark In Review</button>
+      <button class="btn btn-sm btn-ghost" onclick='quickAction(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)},${jsv("Escalated")})'${disabled}>Escalate</button>
+      <button class="btn btn-sm btn-ghost" onclick='quickAction(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)},${jsv("Closed")},${jsv("Benign Expected Activity")})'${disabled}>Close as Benign</button>
+    </div>
+    ${rv.updated_at ? `<div style="font-size:11px;color:var(--text2);margin-top:8px">Last updated: ${rv.updated_at.slice(0,16).replace('T',' ')}</div>` : ''}
+    <div style="margin-top:12px">
+      <div class="rp-title">Notes</div>
+      <div id="${pfx}-notes" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <textarea class="input" id="${pfx}-note-input" rows="2" placeholder="Add a note..." style="min-height:40px"${disabled}></textarea>
+        <button class="btn btn-sm btn-primary" id="${pfx}-note-btn" onclick='addNote(${jsv(caseName)},${jsv(itemType)},${jsv(itemId)},${jsv(pfx)})' style="align-self:end"${disabled}>Add</button>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <div class="history-toolbar">
+        <div class="rp-title" style="cursor:pointer" onclick='toggleHistory(${jsv(pfx)})'>History (click to toggle)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-ghost" onclick='downloadReviewHistoryExport("csv", ${jsv(caseName)}, ${jsv(itemType)}, ${jsv(itemId)})'>CSV</button>
+          <button class="btn btn-sm btn-ghost" onclick='downloadReviewHistoryExport("json", ${jsv(caseName)}, ${jsv(itemType)}, ${jsv(itemId)})'>JSON</button>
+        </div>
+      </div>
+      <div id="${pfx}-history" style="display:none"></div>
+    </div>
+    </div>
+  </div>`;
+}
+
+// Load notes and history after panel renders
+function loadReviewDetail(caseName, itemType, itemId, pfx) {
+  const encodedCase = encodeURIComponent(caseName);
+  const encodedId = encodeURIComponent(itemId);
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  apiJSON(`/api/cases/${encodedCase}/${typePlural}/${encodedId}/review`).then(rv => {
+    const statusInput = document.getElementById(pfx + '-status');
+    if (statusInput && rv.status) statusInput.value = rv.status;
+    const dispInput = document.getElementById(pfx + '-disp');
+    if (dispInput && rv.disposition !== undefined) dispInput.value = rv.disposition || '';
+    const notesEl = document.getElementById(pfx + '-notes');
+    if (notesEl && rv.notes) {
+      notesEl.innerHTML = rv.notes.map(n => `<div class="note-item"><div class="note-meta">${esc(n.author||'analyst')} &mdash; ${(n.created_at||'').slice(0,16).replace('T',' ')}</div><div class="note-body">${esc(n.content)}</div></div>`).join('') || '<div style="color:var(--text2);font-size:13px">No notes yet.</div>';
+    }
+    const ownerInput = document.getElementById(pfx + '-owner');
+    if (ownerInput && !ownerInput.value) ownerInput.value = rv.owner || getReviewerName();
+    const histEl = document.getElementById(pfx + '-history');
+    if (histEl && rv.history) {
+      histEl.innerHTML = rv.history.map(h => `<div class="history-item"><span class="history-time">${(h.changed_at||'').slice(0,16).replace('T',' ')}</span><span>${describeHistoryEvent(h)}</span></div>`).join('') || '<div style="color:var(--text2);font-size:13px">No history yet.</div>';
+    }
+    if (rv.status === 'Closed' || rv.status === 'Suppressed') {
+      const body = document.getElementById(pfx + '-body');
+      const toggle = document.getElementById(pfx + '-toggle');
+      if (body && toggle) {
+        body.style.display = 'none';
+        toggle.textContent = 'Expand Review';
+      }
+    }
+  }).catch(() => {
+    const notesEl = document.getElementById(pfx + '-notes');
+    if (notesEl) notesEl.innerHTML = '<div style="color:var(--text2);font-size:13px">Failed to load notes.</div>';
+  });
+}
+
+async function saveReview(caseName, itemType, itemId, pfx) {
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  const saveBtn = document.getElementById(pfx + '-save-btn');
+  setButtonLoading(saveBtn, true, 'Saving...');
+  const reviewer = document.getElementById(pfx+'-owner').value;
+  const body = {
+    status: document.getElementById(pfx+'-status').value,
+    disposition: document.getElementById(pfx+'-disp').value,
+    owner: reviewer,
+    priority: document.getElementById(pfx+'-pri').value,
+    recommended_tuning_action: document.getElementById(pfx+'-tuning').value,
+    changed_by: getReviewerName(),
+  };
+  try {
+    await apiJSON(`/api/cases/${encodeURIComponent(caseName)}/${typePlural}/${encodeURIComponent(itemId)}/review`, {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body)
+    });
+    notify(`Review updated for ${itemType} ${itemId}.`, 'success');
+    _caseData = null;
+    openCase(caseName, { tab: itemType === 'incident' ? 'incidents' : 'findings', itemType, itemId });
+  } catch (e) {
+    notify(e.message || 'Failed to save review.', 'error');
+  } finally {
+    setButtonLoading(saveBtn, false);
+  }
+}
+
+async function quickAction(caseName, itemType, itemId, pfx, status, disposition) {
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  const reviewer = document.getElementById(pfx+'-owner')?.value || '';
+  const body = {status};
+  if (disposition) body.disposition = disposition;
+  if (reviewer) body.owner = reviewer;
+  body.changed_by = getReviewerName();
+  try {
+    await apiJSON(`/api/cases/${encodeURIComponent(caseName)}/${typePlural}/${encodeURIComponent(itemId)}/review`, {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(body)
+    });
+    notify(`${status}${disposition ? ` / ${disposition}` : ''} applied.`, 'success');
+    _caseData = null;
+    openCase(caseName, { tab: itemType === 'incident' ? 'incidents' : 'findings', itemType, itemId });
+  } catch (e) {
+    notify(e.message || 'Failed to update review state.', 'error');
+  }
+}
+
+async function assignToMe(caseName, itemType, itemId, pfx) {
+  const reviewer = getReviewerName();
+  if (!reviewer) {
+    notify('Sign in before assigning review ownership.', 'error');
+    return;
+  }
+  const ownerInput = document.getElementById(pfx + '-owner');
+  if (ownerInput) ownerInput.value = reviewer;
+  const statusEl = document.getElementById(pfx + '-status');
+  const nextStatus = statusEl && (statusEl.value || 'Open') === 'Open' ? 'In Review' : (statusEl?.value || 'Open');
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  try {
+    await apiJSON(`/api/cases/${encodeURIComponent(caseName)}/${typePlural}/${encodeURIComponent(itemId)}/review`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        owner: reviewer,
+        status: nextStatus,
+        changed_by: reviewer,
+      }),
+    });
+    notify(`Assigned ${itemType} ${itemId} to ${reviewer}.`, 'success');
+    _caseData = null;
+    openCase(caseName, { tab: itemType === 'incident' ? 'incidents' : 'findings', itemType, itemId });
+  } catch (e) {
+    notify(e.message || 'Failed to assign review ownership.', 'error');
+  }
+}
+
+async function addNote(caseName, itemType, itemId, pfx) {
+  const input = document.getElementById(pfx + '-note-input');
+  const content = input.value.trim();
+  if (!content) return;
+  const typePlural = itemType === 'finding' ? 'findings' : 'incidents';
+  const addBtn = document.getElementById(pfx + '-note-btn');
+  setButtonLoading(addBtn, true, 'Adding...');
+  try {
+    await apiJSON(`/api/cases/${encodeURIComponent(caseName)}/${typePlural}/${encodeURIComponent(itemId)}/notes`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({content, author: getReviewerName()})
+    });
+    input.value = '';
+    loadReviewDetail(caseName, itemType, itemId, pfx);
+    notify('Analyst note added.', 'success');
+  } catch (e) {
+    notify(e.message || 'Failed to add note.', 'error');
+  } finally {
+    setButtonLoading(addBtn, false);
+  }
+}
+
+function toggleReviewPanel(pfx) {
+  const body = document.getElementById(pfx + '-body');
+  const toggle = document.getElementById(pfx + '-toggle');
+  if (!body || !toggle) return;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? '' : 'none';
+  toggle.textContent = isHidden ? 'Collapse Review' : 'Expand Review';
+}
+
+function toggleHistory(pfx) {
+  const el = document.getElementById(pfx + '-history');
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+// --- Investigation ---
+function setInvMode(mode) {
+  invMode = mode;
+  document.getElementById('inv-upload-section').style.display = mode === 'upload' ? '' : 'none';
+  document.getElementById('inv-path-section').style.display = mode === 'path' ? '' : 'none';
+  document.getElementById('inv-live-section').style.display = mode === 'live' ? '' : 'none';
+  document.getElementById('btn-upload-mode').style.background = mode === 'upload' ? 'var(--accent)' : 'var(--surface2)';
+  document.getElementById('btn-upload-mode').style.color = mode === 'upload' ? '#fff' : 'var(--text)';
+  document.getElementById('btn-path-mode').style.background = mode === 'path' ? 'var(--accent)' : 'var(--surface2)';
+  document.getElementById('btn-path-mode').style.color = mode === 'path' ? '#fff' : 'var(--text)';
+  document.getElementById('btn-live-mode').style.background = mode === 'live' ? 'var(--accent)' : 'var(--surface2)';
+  document.getElementById('btn-live-mode').style.color = mode === 'live' ? '#fff' : 'var(--text)';
+  if (mode === 'live') loadLiveHealth();
+}
+
+function toggleLiveRecommendedChannels() {
+  const checked = !!document.getElementById('inv-live-recommended')?.checked;
+  document.querySelectorAll('.inv-live-channel').forEach(el => {
+    el.checked = checked;
+  });
+}
+
+function getSelectedLiveChannels() {
+  return Array.from(document.querySelectorAll('.inv-live-channel:checked')).map(el => el.value);
+}
+
+// File handling
+const dz = document.getElementById('dropzone');
+const fi = document.getElementById('file-input');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+fi.addEventListener('change', () => handleFiles(fi.files));
+
+function handleFiles(fileList) {
+  selectedFiles = Array.from(fileList);
+  document.getElementById('file-list').textContent = selectedFiles.map(f => f.name + ' (' + (f.size/1024).toFixed(0) + ' KB)').join(', ');
+}
+
+async function startInvestigation() {
+  const caseName = document.getElementById('inv-case-name').value.trim();
+  const sigma = document.getElementById('inv-sigma').checked;
+  const statusEl = document.getElementById('inv-status');
+  const btn = document.getElementById('btn-start');
+
+  if (invMode === 'upload') {
+    if (!selectedFiles.length) { statusEl.innerHTML = '<span style="color:var(--red)">Please select EVTX files.</span>'; return; }
+    btn.disabled = true;
+    statusEl.innerHTML = '<span style="color:var(--blue)">Uploading files...</span>';
+    const form = new FormData();
+    selectedFiles.forEach(f => form.append('files', f));
+    const params = new URLSearchParams();
+    if (caseName) params.set('case_name', caseName);
+    if (sigma) params.set('enable_sigma', 'true');
+    try {
+      const res = await apiJSON('/api/investigate?' + params.toString(), { method: 'POST', body: form });
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--green)">Job started: ${esc(res.job_id)} &mdash; Case: ${esc(res.case_name)}</span>`;
+      notify(`Investigation queued for ${res.case_name}.`, 'info');
+      pollJob(res.job_id);
+    } catch (e) {
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--red)">${esc(e.message || 'Failed to queue investigation.')}</span>`;
+    }
+  } else if (invMode === 'path') {
+    const evtxPath = document.getElementById('inv-evtx-path').value.trim();
+    if (!evtxPath) { statusEl.innerHTML = '<span style="color:var(--red)">Please enter a path.</span>'; return; }
+    btn.disabled = true;
+    statusEl.innerHTML = '<span style="color:var(--blue)">Starting investigation...</span>';
+    const params = new URLSearchParams({evtx_path: evtxPath});
+    if (caseName) params.set('case_name', caseName);
+    if (sigma) params.set('enable_sigma', 'true');
+    try {
+      const res = await apiJSON('/api/investigate/path?' + params.toString(), { method: 'POST' });
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--green)">Job started: ${esc(res.job_id)} &mdash; Case: ${esc(res.case_name)}</span>`;
+      notify(`Investigation queued for ${res.case_name}.`, 'info');
+      pollJob(res.job_id);
+    } catch (e) {
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--red)">${esc(e.message || 'Failed to queue investigation.')}</span>`;
+    }
+  } else {
+    const channels = getSelectedLiveChannels();
+    const sinceMinutes = parseInt(document.getElementById('inv-live-since')?.value || '30', 10);
+    if (!channels.length) { statusEl.innerHTML = '<span style="color:var(--red)">Select at least one live channel.</span>'; return; }
+    btn.disabled = true;
+    statusEl.innerHTML = '<span style="color:var(--blue)">Starting live investigation...</span>';
+    try {
+      const res = await apiJSON('/api/investigate/live', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          case_name: caseName || null,
+          enable_sigma: sigma,
+          since_minutes: sinceMinutes,
+          channels,
+        }),
+      });
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--green)">Live job started: ${esc(res.job_id)} &mdash; Case: ${esc(res.case_name)}</span>`;
+      notify(`Live investigation queued for ${res.case_name}.`, 'info');
+      showPage('jobs');
+      pollJob(res.job_id);
+    } catch (e) {
+      btn.disabled = false;
+      statusEl.innerHTML = `<span style="color:var(--red)">${esc(e.message || 'Failed to queue live investigation.')}</span>`;
+    }
+  }
+}
+
+async function pollJob(jobId) {
+  const statusEl = document.getElementById('inv-status');
+  const poll = setInterval(async () => {
+    try {
+      const job = await apiJSON('/api/jobs/' + jobId);
+      if (job.status === 'completed') {
+        clearInterval(poll);
+        statusEl.innerHTML = `<span style="color:var(--green)">&#10003; Investigation complete! </span><a href="#" onclick='openCase(${jsv(job.case_name)});return false' style="color:var(--accent)">View case &rarr;</a>`;
+        notify(`Investigation complete for ${job.case_name}.`, 'success');
+      } else if (job.status === 'failed') {
+        clearInterval(poll);
+        statusEl.innerHTML = `<span style="color:var(--red)">&#10007; Failed at stage: ${esc(job.stage||'')} &mdash; ${esc(job.message||'')}</span>`;
+        notify(`Investigation failed for ${job.case_name || job.job_id}.`, 'error');
+      } else {
+        statusEl.innerHTML = `<span style="color:var(--blue)">&#9679; ${esc(job.stage||'...')} &mdash; ${esc(job.message||'Running...')}</span>`;
+      }
+    } catch (e) {
+      clearInterval(poll);
+      statusEl.innerHTML = `<span style="color:var(--red)">${esc(e.message || 'Lost job status during polling.')}</span>`;
+    }
+  }, 2000);
+}
+
+// --- Jobs ---
+async function loadJobs() {
+  renderTableMessage('jobs-table', 6, 'Loading jobs...', 'loading');
+  try {
+    const jobs = await apiJSON('/api/jobs');
+    _jobsCache = Array.isArray(jobs) ? jobs : [];
+    selectedJobIds = new Set(Array.from(selectedJobIds).filter(id => _jobsCache.some(job => job.job_id === id)));
+    updateJobsView();
+  } catch (e) {
+    renderTableMessage('jobs-table', 6, 'Failed to load jobs.');
+    notify('Failed to load jobs.', 'error');
+  }
+}
+
+function compareJobs(a, b, sort) {
+  if (sort === 'status_asc') return String(a.status||'').localeCompare(String(b.status||''));
+  if (sort === 'case_asc') return String(a.case_name||'').localeCompare(String(b.case_name||''));
+  return safeDate(b.updated_at || b.started_at) - safeDate(a.updated_at || a.started_at);
+}
+
+function isJobSelectable(job) {
+  return !!job && !['queued', 'running'].includes(String(job.status || '').toLowerCase());
+}
+
+function syncJobsSelectionUI(pagedJobs = []) {
+  const selectableVisible = pagedJobs.filter(isJobSelectable).map(j => j.job_id);
+  const selectedVisible = selectableVisible.filter(id => selectedJobIds.has(id));
+  const selectAll = document.getElementById('jobs-select-all');
+  if (selectAll) {
+    selectAll.checked = selectableVisible.length > 0 && selectedVisible.length === selectableVisible.length;
+    selectAll.indeterminate = selectedVisible.length > 0 && selectedVisible.length < selectableVisible.length;
+  }
+  const deleteBtn = document.getElementById('jobs-delete-selected');
+  if (deleteBtn) deleteBtn.disabled = selectedJobIds.size === 0;
+}
+
+function toggleJobSelection(jobId, checked) {
+  if (!jobId) return;
+  if (checked) selectedJobIds.add(jobId);
+  else selectedJobIds.delete(jobId);
+  updateJobsView();
+}
+
+function toggleVisibleJobsSelection(checked) {
+  const jobs = [..._jobsCache].sort((a, b) => compareJobs(a, b, tableState.jobs.sort));
+  const paged = paginate(jobs, 'jobs');
+  paged.filter(isJobSelectable).forEach(job => {
+    if (checked) selectedJobIds.add(job.job_id);
+    else selectedJobIds.delete(job.job_id);
+  });
+  updateJobsView();
+}
+
+function clearSelectedJobs() {
+  if (!selectedJobIds.size) return;
+  selectedJobIds = new Set();
+  updateJobsView();
+}
+
+async function deleteSelectedJobs() {
+  const ids = Array.from(selectedJobIds);
+  if (!ids.length) {
+    notify('Select one or more completed jobs first.', 'error');
+    return;
+  }
+  try {
+    const result = await apiJSON('/api/jobs/delete', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ job_ids: ids }),
+    });
+    selectedJobIds = new Set();
+    const deletedCount = Array.isArray(result.deleted) ? result.deleted.length : 0;
+    const skippedCount = Array.isArray(result.skipped) ? result.skipped.length : 0;
+    await loadJobs();
+    notify(
+      skippedCount
+        ? `Deleted ${deletedCount} job(s). Skipped ${skippedCount} active or missing job(s).`
+        : `Deleted ${deletedCount} job(s) from history.`,
+      skippedCount ? 'info' : 'success'
+    );
+  } catch (e) {
+    notify(e.message || 'Failed to delete selected jobs.', 'error');
+  }
+}
+
+function updateJobsView() {
+  const tb = document.getElementById('jobs-table');
+  tableState.jobs.sort = document.getElementById('jobs-sort')?.value || tableState.jobs.sort;
+  savePreferencesPatch({ tableState: { cases: tableState.cases, queue: tableState.queue, jobs: tableState.jobs } });
+  const jobs = [..._jobsCache].sort((a, b) => compareJobs(a, b, tableState.jobs.sort));
+  if (!jobs.length) {
+    renderTableMessage('jobs-table', 6, 'No active jobs.');
+    renderPagination('jobs', 0, 0);
+    setMeta('jobs-meta', 'No active jobs.');
+    syncJobsSelectionUI([]);
+    return;
+  }
+  const paged = paginate(jobs, 'jobs');
+  tb.innerHTML = paged.map(j => {
+    const canOpen = !!j.case_name && !!j.case_available && (j.status === 'completed' || j.status === 'failed');
+    const stale = !!j.case_name && !j.case_available;
+    const selectable = isJobSelectable(j);
+    const checked = selectedJobIds.has(j.job_id) ? ' checked' : '';
+    return `<tr class="${stale ? 'job-row-stale' : ''}"${canOpen ? ` onclick='openCase(${jsv(j.case_name)})'` : ''}>
+    <td onclick="event.stopPropagation()">${selectable ? `<input type="checkbox"${checked} onclick='toggleJobSelection(${jsv(j.job_id)}, this.checked)'>` : `<span class="stale-note">-</span>`}</td>
+    <td style="font-family:monospace">${esc(j.job_id||'')}</td>
+    <td>${canOpen ? `<a href="#" class="table-link" onclick='event.preventDefault();event.stopPropagation();openCase(${jsv(j.case_name)})'>${esc(j.case_name||'')}</a>` : `${esc(j.case_name||'')} ${j.case_name && !j.case_available ? `<div class="stale-note">${esc(j.case_missing_reason || 'Artifacts unavailable')}</div>` : ''}`}</td>
+    <td>${esc(j.stage||'')}</td>
+    <td><span class="badge badge-${j.status||'unknown'}">${j.status||'unknown'}</span></td>
+    <td style="color:var(--text2);font-size:13px">${esc(j.message||'')}</td>
+  </tr>`;
+  }).join('');
+  renderPagination('jobs', jobs.length, paged.length);
+  const staleCount = jobs.filter(j => j.case_name && !j.case_available).length;
+  const selectedCount = selectedJobIds.size;
+  setMeta('jobs-meta', staleCount ? `${jobs.length} job(s) in view · ${staleCount} archived or incomplete case(s)${selectedCount ? ` · ${selectedCount} selected` : ''}` : `${jobs.length} job(s) in view${selectedCount ? ` · ${selectedCount} selected` : ''}`);
+  syncJobsSelectionUI(paged);
+}
+
+// --- Util ---
+function esc(s) { const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML; }
+function displayInputSource(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.toLowerCase().startsWith('live:')) {
+    const channels = text.slice(5).split(',').map(item => item.trim()).filter(Boolean);
+    return channels.length ? `Live Windows (${channels.join(', ')})` : 'Live Windows';
+  }
+  const normalized = text.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (/^[A-Za-z]:[\\/]/.test(text) || normalized.startsWith('./') || normalized.startsWith('../') || normalized.includes('/')) {
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : normalized;
+  }
+  return text;
+}
+
+init();
+</script>
+</body>
+</html>

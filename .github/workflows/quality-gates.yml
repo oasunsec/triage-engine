@@ -1,0 +1,169 @@
+name: quality-gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: quality-gates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  api-regression:
+    name: API Regression Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server,sigma]"
+
+      - name: Run API test suite
+        run: python -m unittest tests.test_api
+
+  performance-regression:
+    name: Performance Regression Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server,sigma]"
+
+      - name: Run performance test suite
+        run: python -m unittest tests.test_performance
+
+  benchmark-wave2:
+    name: Competitive Benchmark Gate (Wave 2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server,sigma]"
+
+      - name: Prepare Wave 2 benchmark inputs
+        run: python scripts/prepare_benchmark_inputs.py --manifest config/benchmark/corpus.json
+
+      - name: Run competitive evaluation
+        run: python scripts/competitive_eval.py --manifest config/benchmark/corpus.json --report competitive_eval.json --skip-hayabusa --fail-on-expectation
+
+      - name: Upload competitive report
+        uses: actions/upload-artifact@v4
+        with:
+          name: competitive-eval-report
+          path: competitive_eval.json
+          if-no-files-found: error
+
+  readiness-gate:
+    name: Production Readiness Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server,sigma]"
+
+      - name: Prepare Wave 2 benchmark inputs
+        run: python scripts/prepare_benchmark_inputs.py --manifest config/benchmark/corpus.json
+
+      - name: Run production readiness check
+        run: python scripts/production_readiness.py
+
+      - name: Upload production readiness report
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-readiness-report
+          path: production_readiness.json
+          if-no-files-found: error
+
+  release-gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    needs:
+      - benchmark-wave2
+      - readiness-gate
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server,sigma]"
+
+      - name: Download competitive report
+        uses: actions/download-artifact@v4
+        with:
+          name: competitive-eval-report
+          path: .
+
+      - name: Download readiness report
+        uses: actions/download-artifact@v4
+        with:
+          name: production-readiness-report
+          path: .
+
+      - name: Run release gate
+        run: python scripts/release_gate.py --config config/release_gate.json --strict --report release_gate.json
+
+      - name: Upload release gate report
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-report
+          path: release_gate.json
+          if-no-files-found: error

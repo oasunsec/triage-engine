@@ -1,0 +1,118 @@
+{
+  "name": "untouched-wave-2-probe",
+  "triage": {
+    "cases_dir": "./cases",
+    "enable_sigma": false,
+    "no_fp_filter": false,
+    "tuning_paths": [
+      "./config/tuning/local.example.json"
+    ],
+    "sigma_rules": [],
+    "extra_args": []
+  },
+  "hayabusa": {
+    "executable": "C:/Tools/hayabusa/hayabusa.exe",
+    "cwd": "C:/Tools/hayabusa",
+    "arguments": [
+      "csv-timeline",
+      "-f",
+      "{input}",
+      "-o",
+      "{output}",
+      "--no-wizard"
+    ],
+    "output_ext": ".csv"
+  },
+  "samples": [
+    {
+      "id": "bits_openvpn_benign_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Command and Control/bits_openvpn.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "benign-candidate"
+      ]
+    },
+    {
+      "id": "defense_execpolicy_changed_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Defense Evasion/de_powershell_execpolicy_changed_sysmon_13.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "defense-evasion"
+      ]
+    },
+    {
+      "id": "discovery_bloodhound_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Discovery/discovery_bloodhound.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "discovery"
+      ]
+    },
+    {
+      "id": "execution_ftp_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Execution/exec_sysmon_1_ftp.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "execution"
+      ]
+    },
+    {
+      "id": "lateral_remote_service_7045_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/LM_Remote_Service02_7045.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "lateral-movement"
+      ]
+    },
+    {
+      "id": "privesc_krbrelayup_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Privilege Escalation/privesc_KrbRelayUp_windows_4624.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "privilege-escalation"
+      ]
+    },
+    {
+      "id": "privesc_sedebug_4703_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Privilege Escalation/win10_4703_SeDebugPrivilege_enabled.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "privilege-escalation"
+      ]
+    },
+    {
+      "id": "lateral_rdp_timezone_104_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Lateral Movement/DFIR_RDP_Client_TimeZone_RdpCoreTs_104_example.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "benign-candidate"
+      ]
+    },
+    {
+      "id": "atomic_windefender_events_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/AutomatedTestingTools/WinDefender_Events_1117_1116_AtomicRedTeam.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "automated-testing-tools"
+      ]
+    },
+    {
+      "id": "persistence_usershellstartup_probe",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Persistence/persistence_startup_UserShellStartup_Folder_Changed_sysmon_13.evtx",
+      "expected": "informational",
+      "tags": [
+        "probe",
+        "persistence"
+      ]
+    }
+  ]
+}

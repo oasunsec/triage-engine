@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.python-version
+
+# Investigation output — regenerated per run, never committed
+cases/
+data/
+
+# Server uploads — temporary
+uploads/
+
+# Dev/test temporaries
+.playwright-cli/
+triage-regression-*/
+triage-lsass-*/
+tmp_*/
+repo_cache/
+repo_audit_cases/
+sample_cache/
+scratch_*.txt
+_patch_test.txt
+can_write_probe.txt
+production_readiness.json
+competitive_eval.json
+competitive_eval_wave2_probe.json
+release_gate.json
+*.db
+*.sqlite
+*.log
+*.bak
+.claude/
+config/tuning/local.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+.venv/
+venv/

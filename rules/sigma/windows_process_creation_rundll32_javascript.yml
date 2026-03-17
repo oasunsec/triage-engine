@@ -1,0 +1,17 @@
+title: Sigma Rundll32 JavaScript Execution
+id: triage-sigma-rundll32-javascript
+status: experimental
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1218.011
+detection:
+  selection_event:
+    EventID: 1
+  selection_image:
+    Image|endswith: rundll32.exe
+  selection_cmd:
+    CommandLine|contains:
+      - javascript:
+      - mshtml
+  condition: selection_event and selection_image and selection_cmd
