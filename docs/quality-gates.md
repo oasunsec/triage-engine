@@ -7,11 +7,18 @@ This document defines the quality gates and service-level targets used to keep t
 1. `production_readiness.json`
 2. `competitive_eval.json`
 3. `config/release_gate.json`
+4. `config/release_gate.ci.json`
 
 Gate execution:
 
 ```powershell
 python .\scripts\release_gate.py --config .\config\release_gate.json
+```
+
+For GitHub Actions, use the CI policy:
+
+```powershell
+python .\scripts\release_gate.py --config .\config\release_gate.ci.json --strict
 ```
 
 ## CI Enforcement
@@ -26,7 +33,9 @@ The workflow enforces:
 2. `python -m unittest tests.test_performance`
 3. `python scripts/competitive_eval.py --manifest config/benchmark/corpus.json --report competitive_eval.json --skip-hayabusa --fail-on-expectation`
 4. `python scripts/production_readiness.py`
-5. `python scripts/release_gate.py --config config/release_gate.json --strict --report release_gate.json`
+5. `python scripts/release_gate.py --config config/release_gate.ci.json --strict --report release_gate.json`
+
+The CI policy keeps the public workflow strict on validation and benchmark quality without requiring a private `config/tuning/local.json` file to exist on clean GitHub runners.
 
 ## Default Quality SLOs
 

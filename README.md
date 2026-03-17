@@ -191,6 +191,7 @@ python .\scripts\release_gate.py --config .\config\release_gate.json --strict --
 ```
 
 Release history is tracked in [CHANGELOG.md](./CHANGELOG.md).
+For local parity with the GitHub API and performance gates, install the optional test dependencies with `python -m pip install -e ".[server,sigma,test]"`.
 
 ## Limitations
 
