@@ -190,6 +190,8 @@ python .\scripts\competitive_eval.py --manifest .\config\benchmark\corpus.json -
 python .\scripts\release_gate.py --config .\config\release_gate.json --strict --report .\release_gate.json
 ```
 
+Release history is tracked in [CHANGELOG.md](./CHANGELOG.md).
+
 ## Limitations
 
 - Live collection is Windows-only
