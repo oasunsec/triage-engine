@@ -71,11 +71,26 @@ Recommended flow:
 
 ## Quick Start
 
+Offline EVTX investigations and the web dashboard work on Windows and Linux. Live collection remains Windows-only.
+
 ### Local Python
+
+Windows PowerShell:
 
 ```powershell
 cd C:\path\to\triage-engine
 powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -BootstrapDeps
+```
+
+Linux or macOS shell:
+
+```bash
+cd ~/triage-engine
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[server,sigma]"
+python server.py
 ```
 
 Open `http://127.0.0.1:8000`.
@@ -90,38 +105,56 @@ On first run:
 
 ### Docker
 
+Windows PowerShell:
+
 ```powershell
 cd C:\path\to\triage-engine
 powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -Mode docker
 ```
 
-Or directly:
+Direct Docker startup on Windows, Linux, or macOS:
 
-```powershell
+```bash
 docker compose up --build
 ```
+
+If your distro still uses the legacy standalone Compose binary, use:
+
+```bash
+docker-compose up --build
+```
+
+You can confirm the Compose plugin is available with `docker compose version`.
 
 Open `http://127.0.0.1:8000` and confirm the runtime badge shows `Docker`.
 
 Run Docker in the background:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -Mode docker -Detach
+```bash
+docker compose up -d --build
 ```
 
 Stop Docker:
 
-```powershell
+```bash
 docker compose down
 ```
 
 ### CLI Investigation
 
+Windows PowerShell:
+
 ```powershell
 triage investigate --evtx C:\path\to\logs --case Baseline-Workstation-Case
 ```
 
-Or use the launcher:
+Linux or macOS shell:
+
+```bash
+triage investigate --evtx /path/to/logs --case Baseline-Workstation-Case
+```
+
+Windows launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -Mode investigate -EvtxPath C:\path\to\logs -CaseName Baseline-Workstation-Case
@@ -129,7 +162,7 @@ powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -Mode investigate -E
 
 ## First Run Checklist
 
-- Install Python 3.10+ or Docker Desktop
+- Install Python 3.10+ or Docker with Docker Compose
 - Clone the repo
 - Start the dashboard
 - Create the first admin account
