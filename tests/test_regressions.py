@@ -18,9 +18,10 @@ from triage_engine.export_sanitizer import apply_demo_redaction_data, sanitize_e
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MALICIOUS_EVTX_DIR = Path(os.environ.get("TRIAGE_MALICIOUS_EVTX_DIR", r"C:\Users\analyst\Downloads\logs"))
-CLEAN_EVTX_DIR = Path(os.environ.get("TRIAGE_CLEAN_EVTX_DIR", r"C:\Users\analyst\Downloads\triage-logs"))
-ATTACK_SAMPLE_DIR = Path(os.environ.get("TRIAGE_ATTACK_SAMPLE_DIR", r"C:\Users\analyst\Downloads\EVTX Sample"))
+SAMPLE_ROOT = Path(os.environ.get("TRIAGE_SAMPLE_ROOT", ROOT / "sample_cache"))
+MALICIOUS_EVTX_DIR = Path(os.environ.get("TRIAGE_MALICIOUS_EVTX_DIR", SAMPLE_ROOT / "logs"))
+CLEAN_EVTX_DIR = Path(os.environ.get("TRIAGE_CLEAN_EVTX_DIR", SAMPLE_ROOT / "triage-logs"))
+ATTACK_SAMPLE_DIR = Path(os.environ.get("TRIAGE_ATTACK_SAMPLE_DIR", SAMPLE_ROOT / "EVTX Sample"))
 SAMPLE_CACHE_DIR = ROOT / "sample_cache"
 ATOMIC_REPO_SETS_DIR = SAMPLE_CACHE_DIR / "atomic_repo_sets"
 DEEPBLUE_AUDIT_DIR = SAMPLE_CACHE_DIR / "deepblue_audit"
@@ -181,7 +182,7 @@ QUICK_LOCAL_GROUP_CHURN_SAMPLE = SAMPLE_CACHE_DIR / "mitre_quick_local_group_chu
 LOCAL_SAM_ADMIN_SAMPLE = Path(
     os.environ.get(
         "TRIAGE_LOCAL_SAM_ADMIN_SAMPLE",
-        r"C:\Users\analyst\Downloads\EVTX Sample\Persistence\sysmon_local_account_creation_and_added_admingroup_12_13.evtx",
+        ATTACK_SAMPLE_DIR / "Persistence" / "sysmon_local_account_creation_and_added_admingroup_12_13.evtx",
     )
 )
 DEEPBLUE_EVENTLOG_SAMPLE = DEEPBLUE_AUDIT_DIR / "disablestop-eventlog.evtx"

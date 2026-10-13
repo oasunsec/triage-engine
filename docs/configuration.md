@@ -65,7 +65,10 @@ These variables are used by dataset regression tests and are not required for no
 
 | Variable | Default in tests | Description |
 |----------|------------------|-------------|
-| `TRIAGE_MALICIOUS_EVTX_DIR` | unset | Malicious sample directory for regression runs. Example: `C:\\path\\to\\malicious-logs`. |
-| `TRIAGE_CLEAN_EVTX_DIR` | unset | Benign or clean sample directory for regression runs. Example: `C:\\path\\to\\clean-logs`. |
-| `TRIAGE_ATTACK_SAMPLE_DIR` | unset | ATT&CK sample directory for regression runs. Example: `C:\\path\\to\\attack-samples`. |
-| `TRIAGE_LOCAL_SAM_ADMIN_SAMPLE` | unset | Optional override for a specific local-SAM regression sample path. |
+| `TRIAGE_SAMPLE_ROOT` | `./sample_cache` | Base directory for the three sample directories below when they are not set. |
+| `TRIAGE_MALICIOUS_EVTX_DIR` | `<TRIAGE_SAMPLE_ROOT>/logs` | Malicious sample directory for regression runs. Example: `C:\\path\\to\\malicious-logs`. |
+| `TRIAGE_CLEAN_EVTX_DIR` | `<TRIAGE_SAMPLE_ROOT>/triage-logs` | Benign or clean sample directory for regression runs. Example: `C:\\path\\to\\clean-logs`. |
+| `TRIAGE_ATTACK_SAMPLE_DIR` | `<TRIAGE_SAMPLE_ROOT>/EVTX Sample` | ATT&CK sample directory for regression runs. Example: `C:\\path\\to\\attack-samples`. |
+| `TRIAGE_LOCAL_SAM_ADMIN_SAMPLE` | `<TRIAGE_ATTACK_SAMPLE_DIR>/Persistence/...` | Optional override for a specific local-SAM regression sample path. |
+
+Tests that need a missing sample are skipped.
