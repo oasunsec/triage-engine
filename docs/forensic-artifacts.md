@@ -336,10 +336,13 @@ Timestamps keep their meaning and are never merged. Each linked file produces
 two `ntfs_file` observations from the current $MFT state:
 `mft_standard_information` ($SI, which user-mode tools can change, so it may be
 timestomped) and `mft_file_name` ($FN for that name, harder but not impossible
-to alter). When $SI creation is earlier than $FN creation, or every $SI time is
-a whole second while $FN times are not, the record is listed as a contradiction.
-This is not proof: archive extraction and copy tools also cause it. Up to 5,000
-such records become observations even without events.
+to alter). Each file's details compare the two: $SI creation earlier than $FN
+creation, and every $SI time a whole second while $FN times are not. Only the
+whole-second pattern is listed case-wide, up to 5,000 records, even without
+events. On a real Windows 11 volume about 4% of files (129,322) had an earlier
+$SI creation from installers, servicing and archive extraction, and none had the
+whole-second pattern, so the earlier creation is counted in a warning but not
+listed. Neither pattern is proof.
 
 USN journal records (V2 and V3; V4 range records are counted) become
 `usn_change` observations with `usn_journal_record` time and decoded reason
@@ -366,6 +369,34 @@ development machine (Python 3.13, Windows 11), 1 million $MFT records parsed at
 about 37,000 records/s with a 131 MiB peak Python heap. 1 million USN records
 parsed at about 49,000 records/s with 20 MiB. Real volumes with longer names or
 more hard links use more memory per record.
+
+## Executable inventory
+
+Links need process-creation events, which many hosts never record. The
+inventory works from the artifacts alone: `executable_inventory.json` joins
+Prefetch runs, Amcache entries, services, Run keys and task commands, and $MFT
+records per volume-relative executable path. Prefetch supplies the full path it
+loaded the program from; `%SystemRoot%`-style commands are expanded with the
+default Windows layout, and each expansion is listed as an assumption.
+
+Each executable lists the observations it was built from and the reasons it may
+deserve a look, each with what it does not establish: a core Windows program's
+name outside the Windows directories; a recorded run or a persistence entry
+whose file is no longer on disk; a run from a temporary or user-writable folder;
+persistence from a user-writable folder; a file created in the 7 days before
+collection that ran, outside Program Files and Windows. A missing Amcache
+publisher only adds weight to another reason. An absent file with a present copy
+whose path differs only in a version, build or hash folder is marked as
+superseded instead of absent. The reasons are leads: they are not alerts and do
+not change the verdict. The Evidence tab lists the ranked executables, and
+`/api/cases/{case}/executable-inventory` serves them.
+
+On one Windows 11 workstation (3,031 executables) the first version flagged 501;
+every "ran but gone" executable was an updated program, and 480 flags were
+developer tools without a publisher. Those findings set the rules above.
+
+The HTML report embeds every alert-derived timeline row and at most 1,000
+artifact rows, linked ones first; `timeline.json` keeps every row.
 
 ## What comes next
 

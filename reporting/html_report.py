@@ -41,6 +41,30 @@ def generate_from_artifacts(
     )
 
 
+REPORT_ARTIFACT_ROWS = 1000
+
+
+def _bounded_timeline(timeline_data: Dict[str, Any], limit: int = REPORT_ARTIFACT_ROWS) -> Dict[str, Any]:
+    """Keep every alert-derived row and at most ``limit`` artifact rows for the HTML report.
+
+    A real workstation bundle produced 25,879 artifact rows (71 MB of report).
+    Linked artifact rows are kept first, then the most recent. timeline.json
+    stays complete.
+    """
+    rows = timeline_data.get("timeline", []) or []
+    artifacts = [row for row in rows if row.get("type") == "artifact"]
+    if len(artifacts) <= limit:
+        return timeline_data
+    linked = [row for row in artifacts if (row.get("related_ids") or {}).get("relationship_ids")]
+    recent = sorted((row for row in artifacts if not (row.get("related_ids") or {}).get("relationship_ids")),
+                    key=lambda row: str(row.get("timestamp") or ""), reverse=True)
+    kept = {id(row) for row in (linked + recent)[:limit]}
+    summary = {**(timeline_data.get("summary") or {}), "report_artifact_rows": len(kept),
+               "omitted_artifact_rows": len(artifacts) - len(kept), "complete_timeline": "timeline.json"}
+    return {**timeline_data, "summary": summary,
+            "timeline": [row for row in rows if row.get("type") != "artifact" or id(row) in kept]}
+
+
 def generate_from_data(
     findings_data: Dict[str, Any],
     timeline_data: Dict[str, Any],
@@ -56,6 +80,7 @@ def generate_from_data(
     """
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    timeline_data = _bounded_timeline(timeline_data)
 
     template = """<!DOCTYPE html>
 <html lang="en">
@@ -1134,7 +1159,8 @@ function renderFilterSummaries() {
   const html = filterSummaryHtml();
   document.getElementById('filter-summary').innerHTML = html;
   document.getElementById('incident-filter-summary').innerHTML = html;
-  document.getElementById('timeline-filter-summary').innerHTML = html;
+  const omitted = (TIMELINE.summary || {}).omitted_artifact_rows || 0;
+  document.getElementById('timeline-filter-summary').innerHTML = html + (omitted ? `<p class="subtle">${esc(omitted)} older artifact row(s) are not embedded in this report; the complete timeline is in ${esc(TIMELINE.summary.complete_timeline)}.</p>` : '');
   document.getElementById('raw-filter-summary').innerHTML = html;
   bindFilterButtons(document);
 }

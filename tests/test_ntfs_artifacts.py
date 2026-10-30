@@ -327,11 +327,24 @@ def test_contradiction_observations_are_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(ntfs_artifacts, "MAX_CONTRADICTION_OBSERVATIONS", 2)
     records = standard_records()
     for number in range(70, 75):
-        records[number] = mft_record(si=times(T0 - timedelta(days=900)),
+        records[number] = mft_record(si=times(T0 - timedelta(days=900), fraction=0),
                                      names=[(ROOT, f"s{number}.exe", times(FILE_TIME))])
     _, observations, warnings = evidence(tmp_path, records)
     assert len(observations) == 4
     assert any("5 $MFT records" in warning for warning in warnings)
+
+
+def test_earlier_si_creation_alone_is_counted_not_listed(tmp_path):
+    # Real Windows 11 volume: 129,322 files showed only this, none the whole-second pattern.
+    records = standard_records()
+    for number in range(70, 73):
+        records[number] = mft_record(si=times(T0 - timedelta(days=900)),
+                                     names=[(ROOT, f"setup{number}.dll", times(FILE_TIME))])
+    ntfs, observations, warnings = evidence(tmp_path, records)
+    assert observations == []
+    assert any(warning.startswith("3 $MFT records have an $SI creation time earlier") for warning in warnings)
+    (entry,) = ntfs.mft.lookup_paths(["\\setup70.dll"])["\\setup70.dll"]
+    assert [item["field"] for item in ntfs.file_observations(entry)[0]["details"]["contradictions"]] == ["created"]
 
 
 # -- USN journal ------------------------------------------------------------------------------------

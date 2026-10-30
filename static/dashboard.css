@@ -291,6 +291,7 @@
   .account-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
   .section-divider { height:1px; background:var(--border); margin:4px 0; }
   .detail-fact-table td { vertical-align:top; }
+  .detail-fact-table td:last-child { overflow-wrap:anywhere; }
   .detail-fact-table td:first-child { width:170px; color:var(--text2); }
   .detail-card-header { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:12px; }
   .detail-card-copy { display:grid; gap:8px; }

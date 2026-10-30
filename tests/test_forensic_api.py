@@ -77,6 +77,19 @@ class ForensicAPITests(unittest.TestCase):
         self.assertEqual(observations.status_code, 200)
         self.assertEqual({item["kind"] for item in observations.json()["observations"]}, {"prefetch_run"})
 
+    def test_executable_inventory_is_written_and_served_without_verdict_effect(self):
+        stored = json.loads((Path(self.result.case_path) / "executable_inventory.json").read_text(encoding="utf-8"))
+        self.assertEqual(stored["summary"]["verdict_effect"], "none")
+        everything = self.viewer.get("/api/cases/mixed-case/executable-inventory?reasons_only=false")
+        self.assertEqual(everything.status_code, 200)
+        body = everything.json()
+        self.assertTrue(body["available"])
+        self.assertIn("\\users\\public\\upd.exe", [item["path"] for item in body["executables"]])
+        self.assertIn("executed_but_absent", body["reasons"])
+        flagged = self.viewer.get("/api/cases/mixed-case/executable-inventory").json()
+        self.assertTrue(all(item["reasons"] for item in flagged["executables"]))
+        self.assertEqual(self._client().get("/api/cases/mixed-case/executable-inventory").status_code, 401)
+
     def test_unauthenticated_and_viewer_cannot_mutate(self):
         anonymous = self._client()
         self.assertEqual(anonymous.get("/api/cases/mixed-case/evidence-links").status_code, 401)

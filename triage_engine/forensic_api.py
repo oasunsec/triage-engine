@@ -89,6 +89,27 @@ def build_forensics_router(*, require_user: Callable, require_case: Callable, au
                        "total": len(rows), "offset": offset, "observations": rows[offset:offset + limit],
                        "kinds": sorted({item.get("kind", "") for item in observations})})
 
+    @router.get("/api/cases/{case_name}/executable-inventory",
+                summary="Executable Inventory",
+                description="Executables joined across artifacts, ranked by review reasons. Reasons are leads; "
+                            "they never change the case verdict.")
+    def list_executables(case_name: str, request: Request, offset: int = Query(0, ge=0),
+                         limit: int = Query(100, ge=1, le=MAX_PAGE), reasons_only: bool = True,
+                         reason: str = Query("", max_length=64), q: str = Query("", max_length=256)):
+        user = require_user(request, ("viewer", "analyst", "admin"))
+        case_path, resolved = case_files(case_name)
+        payload = _read_json(os.path.join(case_path, "executable_inventory.json"))
+        executables = payload.get("executables", []) or []
+        query = q.strip().casefold()
+        rows = [item for item in executables
+                if (not reasons_only or item.get("reasons"))
+                and (not reason or any(entry.get("code") == reason for entry in item.get("reasons", [])))
+                and (not query or query in str(item.get("path", "")).casefold())]
+        audit_case_access(user, case_name=resolved, endpoint="/api/cases/{case_name}/executable-inventory")
+        return redact({"summary": payload.get("summary", {}), "reasons": payload.get("reasons", {}),
+                       "available": bool(payload), "total": len(rows), "offset": offset,
+                       "executables": rows[offset:offset + limit]})
+
     @router.get("/api/cases/{case_name}/evidence-links",
                 summary="List Evidence Links",
                 description="Derived event-to-artifact links with analyst decisions, analyst hypotheses, and source coverage.")

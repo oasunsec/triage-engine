@@ -227,6 +227,22 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertTrue(report.is_file())
             self.assertIn("av-blocked", report.read_text(encoding="utf-8"))
 
+    def test_report_embeds_bounded_artifact_rows_but_every_alert_row(self):
+        # A real workstation bundle produced 25,879 artifact rows, a 71 MB embedded timeline.
+        from reporting.html_report import _bounded_timeline
+        rows = [{"type": "finding", "id": "f-1", "timestamp": "2026-01-01T00:00:00+00:00"}]
+        rows += [{"type": "artifact", "id": f"a-{index}", "timestamp": f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                  "related_ids": {"relationship_ids": ["rel_x"] if index == 0 else []}} for index in range(30)]
+        bounded = _bounded_timeline({"timeline": rows, "summary": {"total_rows": 31}}, limit=5)
+        kept = [row["id"] for row in bounded["timeline"]]
+        self.assertIn("f-1", kept)
+        self.assertIn("a-0", kept)  # linked rows first, even when oldest
+        self.assertEqual(kept[1:], ["a-0", "a-26", "a-27", "a-28", "a-29"])
+        self.assertEqual(bounded["summary"]["omitted_artifact_rows"], 25)
+        self.assertEqual(bounded["summary"]["total_rows"], 31)
+        small = {"timeline": rows[:3], "summary": {}}
+        self.assertIs(_bounded_timeline(small, limit=5), small)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,7 +59,7 @@ jobs:
           tests/test_artifact_packager.py tests/test_artifact_expansion.py
           tests/test_forensic_correlation.py tests/test_forensic_api.py
           tests/test_task_xml_artifacts.py tests/test_registry_hive_artifacts.py tests/test_ntfs_artifacts.py
-          tests/test_workstation_benign.py tests/test_workspace_delivery.py
+          tests/test_workstation_benign.py tests/test_executable_inventory.py tests/test_workspace_delivery.py
           tests/test_parser_availability.py tests/test_parser_parallel.py
           tests/test_product_workflow.py tests/test_html_report.py
           --basetemp=runtime/test-output/forensic-gate

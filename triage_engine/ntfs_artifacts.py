@@ -803,14 +803,20 @@ class NtfsEvidence:
                 items.append(f"{stats['invalid_regions']} malformed USN journal region(s) were skipped.")
         return items
 
-    def contradiction_observations(self, limit: int | None = None) -> tuple[list[dict], int]:
-        """Materialize in-use records whose $SI and $FILE_NAME disagree, bounded; returns (observations, total)."""
+    def contradiction_observations(self, limit: int | None = None) -> tuple[list[dict], int, int]:
+        """Materialize in-use records whose $SI times all lack sub-second precision, bounded.
+
+        Returns (observations, total listed-pattern records, records whose only
+        disagreement is an earlier $SI creation). On a real Windows 11 volume about
+        4% of files show that earlier creation (installers, servicing, archive
+        extraction), so it stays in each file's details and is counted, not listed.
+        """
         limit = MAX_CONTRADICTION_OBSERVATIONS if limit is None else limit
         if self.mft is None:
-            return [], 0
+            return [], 0, 0
         mft = self.mft
         observations: list[dict] = []
-        total = 0
+        total = created_only = 0
         for number in range(mft.records):
             entry = mft.first_name[number]
             if entry < 0 or not mft.flags[number] & _IN_USE or not mft.flags[number] & _HAS_SI:
@@ -820,12 +826,14 @@ class NtfsEvidence:
             # Cheap pre-check for the two reported patterns before building dicts.
             if not (0 < si_created < fn_created) and not (si_created > 0 and si_created % 10_000_000 == 0):
                 continue
-            if not mft.contradictions(number, entry):
+            fields = {item["field"] for item in mft.contradictions(number, entry)}
+            if "precision" not in fields:
+                created_only += "created" in fields
                 continue
             total += 1
             if len(observations) < 2 * limit:
                 observations.extend(self.file_observations(entry))
-        return observations, total
+        return observations, total, created_only
 
 
 def read_ntfs_members(*, host: str, observed_at: str, collector: dict, volume: str = "",
@@ -837,11 +845,15 @@ def read_ntfs_members(*, host: str, observed_at: str, collector: dict, volume: s
     evidence = NtfsEvidence(host=host, observed_at=observed_at, collector=collector, volume=volume,
                             mft=mft_index, mft_source=(mft[1], mft[2]) if mft else None,
                             usn=usn_index, usn_source=(usn[1], usn[2]) if usn else None)
-    observations, total = evidence.contradiction_observations()
+    observations, total, created_only = evidence.contradiction_observations()
     warnings = evidence.warnings()
     if total > MAX_CONTRADICTION_OBSERVATIONS:
-        warnings.append(f"{total} $MFT records have $SI/$FN timestamp contradictions; only the first "
+        warnings.append(f"{total} $MFT records have whole-second $SI times unlike their $FILE_NAME times; only the first "
                         f"{MAX_CONTRADICTION_OBSERVATIONS} are listed as observations.")
+    if created_only:
+        warnings.append(f"{created_only} $MFT records have an $SI creation time earlier than their $FILE_NAME creation, "
+                        "which installers and Windows servicing produce routinely. They are not listed; each file's "
+                        "details keep the comparison.")
     if usn_index is not None and mft_index is None:
         warnings.append("USN journal supplied without its $MFT; journal paths cannot be resolved or linked.")
     return evidence, observations, warnings

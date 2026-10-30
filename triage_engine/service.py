@@ -71,6 +71,7 @@ from triage_engine.export_sanitizer import sanitize_export_data
 from triage_engine.evidence import atomic_json, bind_event_sources, capture_evidence, case_identity, public_sources, write_analysis_manifest
 from triage_engine.forensic_artifacts import read_forensic_bundle
 from triage_engine.forensic_correlation import correlate_evidence, cross_source_alerts
+from triage_engine.executable_inventory import build_executable_inventory
 from triage_engine import __version__
 from triage_engine.evidence_scope import build_evidence_scope
 from triage_engine.id_utils import assign_display_labels
@@ -1222,6 +1223,30 @@ def _telemetry_present_display(telemetry_summary: Dict[str, Any]) -> List[str]:
     return list(telemetry_summary.get("present", []) or [])
 
 
+def _artifact_next_steps(forensic, persistence_only: bool, inventory: dict | None,
+                         link_coverage: Dict[str, Any], has_events: bool) -> List[str]:
+    """Next steps that name what this case's artifacts actually contain."""
+    steps = []
+    summary = (inventory or {}).get("summary", {})
+    flagged = summary.get("with_reasons", 0)
+    if flagged:
+        weights = {code: info.get("weight", 0) for code, info in (inventory or {}).get("reasons", {}).items()}
+        leads = [(code, count) for code, count in sorted(summary.get("by_reason", {}).items(), key=lambda item: -item[1])
+                 if weights.get(code, 0) > 0]
+        top = ", ".join(f"{count} {code.replace('_', ' ')}" for code, count in leads[:3])
+        steps.append(f"Review the {flagged} executable(s) the inventory marks for a look ({top}); "
+                     "these are leads, not detections.")
+    process = ((link_coverage or {}).get("families", {}) or {}).get("windows_process_creation", {})
+    if not has_events or process.get("count", 0) == 0:
+        steps.append("No process-creation events (Sysmon event 1 or Security event 4688) were supplied, so artifacts "
+                     "cannot be tied to process launches. Collect them, or enable process-creation auditing with "
+                     "command lines, for future cases.")
+    steps.append("Persistence snapshot times describe collection. Validate execution using independent event or filesystem evidence."
+                 if persistence_only else
+                 "Artifact times keep their source meaning (run, file record, collection); identity and intent need corroboration.")
+    return steps
+
+
 def _build_collection_quality_summary(
     *,
     input_mode: str,
@@ -2092,6 +2117,10 @@ def run_investigation(
         if forensic and events and correlation_enabled:
             relationships, relationship_coverage = correlate_evidence(events, forensic.observations, ntfs=forensic.ntfs)
             alerts.extend(cross_source_alerts(relationships, events, alerts))
+        # Artifact-first view: needs no event records, never raises alerts.
+        executable_inventory = (build_executable_inventory(forensic.observations, ntfs=forensic.ntfs,
+                                                           observed_at=forensic.manifest.get("observed_at", ""))
+                                if forensic else None)
 
         # ---- model ----
         stage = "model"
@@ -2229,6 +2258,9 @@ def run_investigation(
                 "coverage": relationship_coverage,
                 "artifact_path": "evidence_relationships.json",
             }
+            if executable_inventory is not None:
+                case_meta["executable_inventory"] = {**executable_inventory["summary"],
+                                                     "artifact_path": "executable_inventory.json"}
         if request.input_mode == "live":
             live_collection_summary = _build_live_collection_summary(
                 live_progress,
@@ -2270,9 +2302,9 @@ def run_investigation(
         evidence_scope = build_evidence_scope(events, findings, incidents, telemetry_gaps=telemetry_gaps)
         if forensic:
             evidence_scope["artifact_scope"] = case_meta["forensic_summary"]
-            triage.recommended_next.insert(0,
-                "Persistence snapshot times describe collection. Validate execution using independent event or filesystem evidence."
-                if persistence_only else "Validate browser downloads and Prefetch run records using independent evidence; collection time is separate from recorded activity.")
+            for step in reversed(_artifact_next_steps(forensic, persistence_only, executable_inventory,
+                                                      relationship_coverage, bool(events))):
+                triage.recommended_next.insert(0, step)
         case_meta["evidence_scope"] = evidence_scope
         if evidence_scope["needs_scope_review"]:
             triage.recommended_next.insert(0, "Confirm the evidence scope: " + " ".join(evidence_scope["warnings"]))
@@ -2363,6 +2395,12 @@ def run_investigation(
                                                              "relationships": relationships}))
         artifacts["evidence_relationships"] = relationships_path
         rpt.on_artifact(relationships_path)
+        if executable_inventory is not None:
+            inventory_path = os.path.join(case_path, "executable_inventory.json")
+            atomic_json(inventory_path, sanitize_export_data({"case_id": identity["case_id"], "run_id": run_id,
+                                                             "representation": "derived_inventory", **executable_inventory}))
+            artifacts["executable_inventory"] = inventory_path
+            rpt.on_artifact(inventory_path)
 
         stage = "timeline_export"
         _flush_stage_timing(stage)

@@ -196,6 +196,14 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
     creation are contradictions, never proof. A file record at the path is
     context only: `ntfs_file` links never qualify a cross-source finding. A
     journal-creation link counts as the independent `file_system` family.
+15. **Executable inventory** (`triage_engine/executable_inventory.py`, case
+    file `executable_inventory.json`). Links are event-anchored, so a host
+    without process-creation telemetry got nothing from its artifacts. The
+    inventory joins observations per volume-relative executable path and
+    attaches review reasons with what each does not establish. Reasons never
+    become alerts and never change the verdict (`verdict_effect: none`). They
+    were calibrated on a real workstation; see
+    [forensic-artifacts.md](../forensic-artifacts.md#executable-inventory).
 
 ## Dependencies and licensing
 

@@ -5,6 +5,7 @@
 let forensicCase = '';
 let forensicLinks = null;
 let forensicObservations = [];
+let forensicInventory = null;
 let forensicRequestId = 0;
 
 const LINK_CLASS_LABELS = {
@@ -27,15 +28,18 @@ async function loadForensicEvidence(name) {
   const stillCurrent = () => requestId === forensicRequestId && parentRequest === caseRequestId && currentPage === 'case-detail' && _detailTarget.tab === 'evidence';
   try {
     const base = `/api/cases/${encodeURIComponent(name)}`;
-    const [links, observations] = await Promise.all([
+    const [links, observations, inventory] = await Promise.all([
       apiJSON(`${base}/evidence-links?limit=500`),
       apiJSON(`${base}/forensic-observations?limit=500`),
+      apiJSON(`${base}/executable-inventory?limit=200`).catch(() => ({available: false})),
     ]);
     if (!stillCurrent()) return;
     forensicLinks = links;
     forensicObservations = observations.observations || [];
+    forensicInventory = inventory;
     panel.innerHTML = `<div class="panel-stack">
       ${renderForensicCoverage(links.summary || {}, observations)}
+      ${renderExecutableInventory(inventory)}
       <section class="card"><div class="section-heading"><div><div class="eyebrow">EVIDENCE LINKS</div><h2>Event-to-artifact links</h2></div>
         <span class="subtle-hint">Derived links are never edited; decisions are stored separately</span></div>
         <p class="scope-note">Each link shows the matching field values, its class, any contradiction, and what it does not establish. Showing ${esc((links.relationships || []).length)} of ${esc(links.total || 0)}.</p>
@@ -59,6 +63,45 @@ async function loadForensicEvidence(name) {
     if (!stillCurrent()) return;
     panel.innerHTML = `<div class="card"><div class="empty-state">Could not load forensic evidence. ${esc(error.message || '')}</div><button class="btn btn-ghost" onclick='loadForensicEvidence(${jsv(name)})'>Retry</button></div>`;
   }
+}
+
+function renderExecutableInventory(inventory) {
+  if (!inventory || !inventory.available) return '';
+  const summary = inventory.summary || {};
+  const reasons = inventory.reasons || {};
+  const rows = inventory.executables || [];
+  const options = Object.entries(summary.by_reason || {}).map(([code, count]) => `<option value="${esc(code)}">${esc(code.replace(/_/g, ' '))} (${esc(count)})</option>`).join('');
+  return `<section class="card"><div class="section-heading"><div><div class="eyebrow">EXECUTABLES</div><h2>Executables worth a look</h2></div>
+      <span class="subtle-hint">Leads for review; they do not change the verdict</span></div>
+    <p class="scope-note">${esc(summary.executables || 0)} executable(s) joined across Prefetch, Amcache, persistence and file-system records; ${esc(summary.with_reasons || 0)} have a reason to look.${summary.file_system_checked ? '' : ' No $MFT was supplied, so presence on disk is unknown.'}</p>
+    ${options ? `<div class="table-toolbar"><div class="toolbar-group"><div class="input-group"><label for="inventory-reason">Reason</label><select class="input" id="inventory-reason" onchange="renderInventoryRows()"><option value="">All reasons</option>${options}</select></div></div></div>` : ''}
+    <div id="inventory-rows">${inventoryRows(rows, reasons)}</div></section>`;
+}
+
+function inventoryRows(rows, reasons) {
+  if (!rows.length) return '<div class="empty-state">No executable has a reason to look.</div>';
+  return rows.map(item => {
+    const fs = item.file_system || {};
+    const presence = item.file_system ? (fs.present ? 'on disk' : 'not on disk') : 'disk unknown';
+    const amcache = (item.amcache || [])[0] || {};
+    const facts = [`${(item.runs || []).length} recorded run(s)`, `${(item.persistence || []).length} persistence entr${(item.persistence || []).length === 1 ? 'y' : 'ies'}`, presence, item.location.replace(/_/g, ' ')];
+    return `<details class="timeline-entry"><summary><span class="badge">${esc(item.score)}</span><span><strong>${esc(item.display_path || item.path)}</strong><small>${(item.reasons || []).map(reason => esc(reason.code.replace(/_/g, ' '))).join(' · ')}</small></span></summary>
+      <div class="timeline-evidence">
+        <p>${facts.map(esc).join(' · ')}${amcache.sha1 ? ` · SHA-1 <code>${esc(amcache.sha1)}</code>` : ''}${amcache.publisher ? ` · publisher ${esc(amcache.publisher)}` : ''}</p>
+        <ul>${(item.reasons || []).map(reason => `<li><b>${esc(reason.meaning)}</b> Does not establish: ${esc(reason.does_not_establish)}</li>`).join('')}</ul>
+        ${(item.runs || []).length ? `<p>Runs: ${item.runs.slice(-8).map(esc).join(', ')}</p>` : ''}
+        ${(item.persistence || []).map(entry => `<p>${esc(entry.mechanism)}: ${esc(entry.name)}</p>`).join('')}
+        ${item.file_system && fs.present ? `<p>$FILE_NAME created ${esc(fs.file_name_created)} · $STANDARD_INFORMATION created ${esc(fs.standard_information_created)} · ${esc(fs.journal_creates)} journal create(s)</p>` : ''}
+        ${(item.assumptions || []).length ? `<p class="scope-note">Assumed: ${item.assumptions.map(esc).join('; ')}</p>` : ''}
+        <p class="scope-note">Built from ${esc((item.observation_ids || []).length)} observation(s).</p>
+      </div></details>`;
+  }).join('');
+}
+
+function renderInventoryRows() {
+  const code = document.getElementById('inventory-reason')?.value || '';
+  const rows = (forensicInventory?.executables || []).filter(item => !code || (item.reasons || []).some(reason => reason.code === code));
+  document.getElementById('inventory-rows').innerHTML = inventoryRows(rows, forensicInventory?.reasons || {});
 }
 
 function renderForensicCoverage(summary, observations) {
@@ -93,7 +136,7 @@ function renderForensicLinks() {
     const fields = (link.matched_fields || []).map(field => `<li><code>${esc(field.event_field)}</code> = <code>${esc(field.artifact_field)}</code>: ${esc(field.value || `${field.event_value} / ${field.artifact_value}`)}</li>`).join('');
     const contradictions = (link.contradictions || []).map(item => `<li>${esc(item.field)}: event <code>${esc(item.event_value)}</code>, artifact <code>${esc(item.artifact_value)}</code>. ${esc(item.meaning)}</li>`).join('');
     const inferred = (link.inferred_claims || []).map(claim => `<li>${linkClassBadge(claim.class)} ${esc(claim.claim)} <small>(${(claim.basis || []).map(esc).join(', ')})</small></li>`).join('');
-    return `<details class="timeline-entry"><summary><span>${linkClassBadge(link.link_class)}</span><span><strong>${esc(source.process || source.channel || 'Event')} ↔ ${esc(target.artifact_kind)}</strong><small>${esc((link.rule || {}).name)} v${esc((link.rule || {}).version)} · ${esc((link.review || {}).decision || 'unreviewed')}${(link.contradictions || []).length ? ' · contradiction' : ''}</small></span></summary>
+    return `<details class="timeline-entry"><summary><span>${linkClassBadge(link.link_class)}</span><span><strong>${esc(source.process || (source.configuration ? `${source.configuration} ${source.configuration_change || ''}`.trim() : '') || source.channel || 'Event')} ↔ ${esc(target.artifact_kind)}</strong><small>${esc((link.rule || {}).name)} v${esc((link.rule || {}).version)} · ${esc((link.review || {}).decision || 'unreviewed')}${(link.contradictions || []).length ? ' · contradiction' : ''}</small></span></summary>
       <div class="timeline-evidence">
         <p><b>Event record:</b> ${esc(source.event_id)} in ${esc(source.channel)}, record ${esc(source.record_id)} at ${esc(source.timestamp)} (${esc(source.time_semantics)})<br><small>${esc(source.source_file)} · sha256 ${esc(source.source_sha256)} · ${esc(source.observation_id)}</small></p>
         <p><b>Artifact record:</b> ${esc(target.artifact_kind)} record ${esc(target.source_record)} at ${esc(target.timestamp)} (${esc(target.time_semantics)})<br><small>${esc(target.source_file)} · sha256 ${esc(target.source_sha256)} · ${esc(target.observation_id)}</small></p>
