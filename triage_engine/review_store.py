@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,9 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _resolve_data_dir() -> str:
     configured = str(os.environ.get("TRIAGE_DATA_DIR", "") or "").strip()
     if not configured:
+        if getattr(sys, "frozen", False):
+            local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+            return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
         return os.path.join(_PROJECT_ROOT, "data")
     expanded = os.path.expanduser(configured)
     if os.path.isabs(expanded):
@@ -141,9 +145,40 @@ def _init_db() -> None:
             (
                 ("001_initial_schema", _migration_001_initial_schema),
                 ("002_add_missing_columns", _migration_002_add_missing_columns),
+                ("003_evidence_link_reviews", _migration_003_evidence_link_reviews),
             ),
             namespace="review_store",
         )
+
+
+def _migration_003_evidence_link_reviews(con: sqlite3.Connection) -> None:
+    # Analyst decisions about derived evidence links, and analyst-entered
+    # hypothesis links. Kept apart from engine output, which is never edited.
+    con.executescript("""
+CREATE TABLE IF NOT EXISTS evidence_link_reviews (
+    case_name       TEXT NOT NULL,
+    relationship_id TEXT NOT NULL,
+    decision        TEXT NOT NULL DEFAULT 'unreviewed',
+    rationale       TEXT NOT NULL DEFAULT '',
+    reviewed_by     TEXT NOT NULL DEFAULT '',
+    reviewed_at     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (case_name, relationship_id)
+);
+CREATE TABLE IF NOT EXISTS analyst_evidence_links (
+    case_name             TEXT NOT NULL,
+    link_id               TEXT NOT NULL,
+    source_observation_id TEXT NOT NULL,
+    target_observation_id TEXT NOT NULL,
+    claim                 TEXT NOT NULL,
+    decision              TEXT NOT NULL DEFAULT 'unreviewed',
+    rationale             TEXT NOT NULL DEFAULT '',
+    created_by            TEXT NOT NULL,
+    created_at            TEXT NOT NULL,
+    updated_by            TEXT NOT NULL DEFAULT '',
+    updated_at            TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (case_name, link_id)
+);
+""")
 
 
 def _migration_001_initial_schema(con: sqlite3.Connection) -> None:
@@ -847,6 +882,8 @@ def delete_case_review_state(case_name: str) -> None:
         con.execute("DELETE FROM review_history WHERE case_name = ?", (case_name,))
         con.execute("DELETE FROM review_queue_index WHERE case_name = ?", (case_name,))
         con.execute("DELETE FROM queue_materialization_state WHERE case_name = ?", (case_name,))
+        con.execute("DELETE FROM evidence_link_reviews WHERE case_name = ?", (case_name,))
+        con.execute("DELETE FROM analyst_evidence_links WHERE case_name = ?", (case_name,))
 
 
 def get_all_finding_reviews(case_name: str) -> Dict[str, Dict[str, Any]]:
@@ -863,3 +900,80 @@ def get_all_incident_reviews(case_name: str) -> Dict[str, Dict[str, Any]]:
             "SELECT * FROM incident_reviews WHERE case_name = ?", (case_name,)
         ).fetchall()
     return {r["incident_id"]: _row_to_dict(r) for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Evidence link decisions
+# ---------------------------------------------------------------------------
+
+LINK_DECISIONS = ("unreviewed", "confirmed", "rejected", "needs_more_evidence")
+
+
+def get_evidence_link_reviews(case_name: str) -> Dict[str, Dict[str, Any]]:
+    with _conn() as con:
+        rows = con.execute("SELECT * FROM evidence_link_reviews WHERE case_name = ?", (case_name,)).fetchall()
+    return {r["relationship_id"]: _row_to_dict(r) for r in rows}
+
+
+def upsert_evidence_link_review(case_name: str, relationship_id: str, *, decision: str, rationale: str,
+                                changed_by: str) -> Dict[str, Any]:
+    if decision not in LINK_DECISIONS:
+        raise ValueError("Invalid evidence link decision")
+    now = _now()
+    with _conn() as con:
+        old = con.execute("SELECT decision, rationale FROM evidence_link_reviews WHERE case_name = ? AND relationship_id = ?",
+                          (case_name, relationship_id)).fetchone()
+        con.execute(
+            "INSERT INTO evidence_link_reviews (case_name, relationship_id, decision, rationale, reviewed_by, reviewed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(case_name, relationship_id) DO UPDATE SET "
+            "decision = excluded.decision, rationale = excluded.rationale, reviewed_by = excluded.reviewed_by, "
+            "reviewed_at = excluded.reviewed_at",
+            (case_name, relationship_id, decision, rationale, changed_by, now),
+        )
+    _record_history(case_name, "evidence_link", relationship_id, "decision", old["decision"] if old else "unreviewed",
+                    decision, changed_by, now)
+    if rationale != (old["rationale"] if old else ""):
+        _record_history(case_name, "evidence_link", relationship_id, "rationale", old["rationale"] if old else "",
+                        rationale, changed_by, now)
+    return {"case_name": case_name, "relationship_id": relationship_id, "decision": decision,
+            "rationale": rationale, "reviewed_by": changed_by, "reviewed_at": now}
+
+
+def list_analyst_evidence_links(case_name: str) -> List[Dict[str, Any]]:
+    with _conn() as con:
+        rows = con.execute("SELECT * FROM analyst_evidence_links WHERE case_name = ? ORDER BY created_at, link_id",
+                           (case_name,)).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def add_analyst_evidence_link(case_name: str, *, link_id: str, source_observation_id: str,
+                              target_observation_id: str, claim: str, created_by: str) -> Dict[str, Any]:
+    now = _now()
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO analyst_evidence_links (case_name, link_id, source_observation_id, target_observation_id, "
+            "claim, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (case_name, link_id, source_observation_id, target_observation_id, claim, created_by, now),
+        )
+    _record_history(case_name, "evidence_link", link_id, "analyst_hypothesis", "", claim, created_by, now)
+    return {"case_name": case_name, "link_id": link_id, "source_observation_id": source_observation_id,
+            "target_observation_id": target_observation_id, "claim": claim, "decision": "unreviewed",
+            "rationale": "", "created_by": created_by, "created_at": now, "updated_by": "", "updated_at": ""}
+
+
+def update_analyst_evidence_link(case_name: str, link_id: str, *, decision: str, rationale: str,
+                                 changed_by: str) -> Optional[Dict[str, Any]]:
+    if decision not in LINK_DECISIONS:
+        raise ValueError("Invalid evidence link decision")
+    now = _now()
+    with _conn() as con:
+        old = con.execute("SELECT decision FROM analyst_evidence_links WHERE case_name = ? AND link_id = ?",
+                          (case_name, link_id)).fetchone()
+        if old is None:
+            return None
+        con.execute("UPDATE analyst_evidence_links SET decision = ?, rationale = ?, updated_by = ?, updated_at = ? "
+                    "WHERE case_name = ? AND link_id = ?", (decision, rationale, changed_by, now, case_name, link_id))
+        row = con.execute("SELECT * FROM analyst_evidence_links WHERE case_name = ? AND link_id = ?",
+                          (case_name, link_id)).fetchone()
+    _record_history(case_name, "evidence_link", link_id, "decision", old["decision"], decision, changed_by, now)
+    return _row_to_dict(row)

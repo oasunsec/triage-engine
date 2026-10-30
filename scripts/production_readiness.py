@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 import subprocess
 import sys
@@ -22,6 +23,13 @@ TEST_MODULES = [
     "tests.test_tuning_bootstrap",
     "tests.test_sigma_support",
     "tests.test_sigma_cli_e2e",
+    "tests.test_api",
+    "tests.test_backend_hardening",
+    "tests.test_product_workflow",
+    "tests.test_msp_api",
+    "tests.test_workspace_delivery",
+    "tests.test_parser_availability",
+    "tests.test_packaging_assets",
 ]
 
 
@@ -30,7 +38,12 @@ def _utc_now() -> str:
 
 
 def _run_validation() -> Dict[str, Any]:
-    command = [sys.executable, "-m", "unittest", *TEST_MODULES]
+    # Pytest also collects function-style API/packaging tests; unittest silently
+    # omits those functions when given the same module names.
+    command = [
+        sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+        *(module.replace(".", "/") + ".py" for module in TEST_MODULES),
+    ]
     result = subprocess.run(
         command,
         cwd=str(ROOT),
@@ -121,10 +134,11 @@ def _recommendations(validation: Dict[str, Any], tuning: Dict[str, Any], sigma: 
 
 
 def main(argv: List[str] | None = None) -> int:
-    report_path = ROOT / "production_readiness.json"
-    if argv:
-        if len(argv) >= 2 and argv[0] == "--report":
-            report_path = Path(argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", type=Path, default=ROOT / "audit-artifacts" / "production_readiness.json")
+    parser.add_argument("--strict", action="store_true", help="Exit nonzero unless validation, reviewed Sigma content, and local tuning qualify as a production candidate.")
+    args = parser.parse_args(argv)
+    report_path = args.report.resolve()
 
     validation = _run_validation()
     tuning = _tuning_status()
@@ -142,6 +156,7 @@ def main(argv: List[str] | None = None) -> int:
         "recommendations": _recommendations(validation, tuning, sigma),
     }
 
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
     print("Production readiness check")
@@ -150,7 +165,7 @@ def main(argv: List[str] | None = None) -> int:
     print(f"Validation passed: {validation['passed']}")
     print(f"Local tuning configured: {tuning['configured']}")
     print(f"Sigma rules available: {sigma['rule_count']}")
-    return 0 if validation["passed"] else 1
+    return 0 if validation["passed"] and (not args.strict or status == "production_candidate") else 1
 
 
 if __name__ == "__main__":

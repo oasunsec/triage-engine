@@ -3582,15 +3582,13 @@ class DatasetRegressionTests(unittest.TestCase):
     @unittest.skipUnless(WMI_VSS_DELETE_SAMPLE.is_file(), "WMI VSS delete EVTX sample not available")
     def test_attack_sample_wmi_vss_delete_generates_finding(self):
         findings = self._run_dataset(WMI_VSS_DELETE_SAMPLE, "test-attack-sample-wmi-vss-delete")
-        title = "Suspicious: Shadow " + "Copy Deletion"
-        finding = next((item for item in findings["findings"] if item.get("title") == title), None)
+        finding = next((item for item in findings["findings"] if item.get("title") == "Inhibit System Recovery Command"), None)
         self.assertIsNotNone(finding)
 
     @unittest.skipUnless(POWERSHELL_VSS_DELETE_SAMPLE.is_file(), "PowerShell VSS delete EVTX sample not available")
     def test_attack_sample_powershell_vss_delete_generates_finding(self):
         findings = self._run_dataset(POWERSHELL_VSS_DELETE_SAMPLE, "test-attack-sample-powershell-vss-delete")
-        title = "Suspicious: Shadow " + "Copy Deletion"
-        finding = next((item for item in findings["findings"] if item.get("title") == title), None)
+        finding = next((item for item in findings["findings"] if item.get("title") == "Inhibit System Recovery Command"), None)
         self.assertIsNotNone(finding)
 
     @unittest.skipUnless(HOSTS_FILE_MODIFIED_SAMPLE.is_file(), "hosts file modification EVTX sample not available")

@@ -354,6 +354,7 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts.extend(_golden_ticket_use_pattern(events))
     alerts.extend(_brute_force(events))
     alerts.extend(_password_spray(events))
+    alerts.extend(_openssh_brute_force(events))
     alerts.extend(_lsass_access(events))
     alerts.extend(_credential_dump(events))
     alerts.extend(_kerberoasting(events))
@@ -2952,7 +2953,7 @@ def _user_account_discovery(events: List[NormalizedEvent]) -> List[Alert]:
 
         base = _basename(ev.process_name)
         is_net_user = base in {"net.exe", "net1.exe"} and " user " in f" {command_l} "
-        is_ad_user = "get-aduser" in command_l or "get-localuser" in command_l
+        is_ad_user = any(marker in command_l for marker in ("get-aduser", "get-adcomputer", "get-localuser"))
         if not is_net_user and not is_ad_user:
             continue
 
@@ -2963,12 +2964,27 @@ def _user_account_discovery(events: List[NormalizedEvent]) -> List[Alert]:
     for (host, actor, logon_id), cluster in grouped.items():
         first = sorted(cluster, key=lambda item: item.timestamp)[0]
         commands = sorted({(item.command_line or item.event_data.get("ScriptBlockText", "") or "").strip() for item in cluster if (item.command_line or item.event_data.get("ScriptBlockText", "") or "").strip()})
+        # Preserve the generic T1087 behavior for ambiguous ``net user``
+        # commands, but use the ATT&CK sub-technique whenever the command
+        # explicitly identifies a local or domain directory.  This keeps the
+        # finding useful to existing consumers while making the scope visible
+        # in coverage reports and exported evidence.
+        domain_scope = any(
+            marker in command.lower()
+            for command in commands
+            for marker in ("get-aduser", "get-adcomputer")
+        ) or any(
+            re.search(r"(?:^|\s)/domain(?:\s|$)", command.lower())
+            for command in commands
+        )
+        local_scope = any("get-localuser" in command.lower() for command in commands)
+        technique = "T1087.002" if domain_scope else "T1087.001" if local_scope else "T1087"
         alerts.append(
             Alert(
                 rule_name="User Account Discovery",
                 severity="medium",
                 mitre_tactic="Discovery",
-                mitre_technique="T1087",
+                mitre_technique=technique,
                 description=f"{actor} enumerated user-account information on {host}",
                 explanation="Command-line or PowerShell user queries such as net user, Get-ADUser, or Get-LocalUser were observed and are consistent with account discovery.",
                 confidence="high",
@@ -2981,6 +2997,7 @@ def _user_account_discovery(events: List[NormalizedEvent]) -> List[Alert]:
                     "subject_logon_id": logon_id if logon_id != "(unknown)" else "",
                     "commands": commands,
                     "event_count": len(cluster),
+                    "scope": "domain" if domain_scope else "local" if local_scope else "unspecified",
                     "evidence_strength": "medium",
                 },
             )
@@ -3015,12 +3032,26 @@ def _group_discovery(events: List[NormalizedEvent]) -> List[Alert]:
     for (host, actor, logon_id), cluster in grouped.items():
         first = sorted(cluster, key=lambda item: item.timestamp)[0]
         commands = sorted({(item.command_line or item.event_data.get("ScriptBlockText", "") or "").strip() for item in cluster if (item.command_line or item.event_data.get("ScriptBlockText", "") or "").strip()})
+        domain_scope = any(
+            marker in command.lower()
+            for command in commands
+            for marker in ("get-adgroup", "get-adgroupmember")
+        ) or any(
+            re.search(r"(?:^|\s)/domain(?:\s|$)", command.lower())
+            for command in commands
+        )
+        local_scope = any(
+            marker in command.lower()
+            for command in commands
+            for marker in ("get-localgroup", "get-localgroupmember")
+        ) or any(" localgroup " in f" {command.lower()} " for command in commands)
+        technique = "T1069.002" if domain_scope else "T1069.001" if local_scope else "T1069"
         alerts.append(
             Alert(
                 rule_name="Group Discovery",
                 severity="medium",
                 mitre_tactic="Discovery",
-                mitre_technique="T1069",
+                mitre_technique=technique,
                 description=f"{actor} enumerated local or domain groups on {host}",
                 explanation="Group-query commands such as net group, net localgroup, Get-ADGroup, or Get-LocalGroup were observed and are consistent with permission-group discovery.",
                 confidence="high",
@@ -3033,6 +3064,7 @@ def _group_discovery(events: List[NormalizedEvent]) -> List[Alert]:
                     "subject_logon_id": logon_id if logon_id != "(unknown)" else "",
                     "commands": commands,
                     "event_count": len(cluster),
+                    "scope": "domain" if domain_scope else "local" if local_scope else "unspecified",
                     "evidence_strength": "medium",
                 },
             )
@@ -3727,6 +3759,120 @@ def _password_spray(events: List[NormalizedEvent]) -> List[Alert]:
     return alerts
 
 
+def _openssh_brute_force(events: List[NormalizedEvent]) -> List[Alert]:
+    """Detect SSH brute-force / password guessing from OpenSSH Operational logs.
+
+    OpenSSH writes its own Operational channel (provider OpenSSH, event id 4)
+    with human-readable payload strings that mirror sshd log lines:
+        Failed password for <user> from <ip> port <n> ssh2
+        Invalid user <user> from <ip> port <n>
+        Connection closed by authenticating user <user> <ip> port <n> [preauth]
+        Disconnecting <user> <ip> port <n>: ... [preauth]
+        maximum authentication attempts exceeded ...
+
+    The Security log alone cannot see these, so a host with a public SSH
+    service (or a pivot target) is otherwise invisible to the engine.  This
+    rule aggregates auth failures by source IP parsed from the payload within
+    a rolling window and promotes a brute-force finding,
+    matching ATT&CK T1110.001 (Password Guessing).
+    """
+    alerts = []
+    if not events:
+        return alerts
+    tracker: Dict[str, List[Tuple[datetime, str, NormalizedEvent]]] = defaultdict(list)
+    alerted: Set[str] = set()
+    window = timedelta(minutes=10)
+
+    for ev in events:
+        channel = (ev.channel or "").lower()
+        if "openssh" not in channel:
+            continue
+        payload = str(((ev.event_data or {}).get("payload") or ev.command_line or "")).strip()
+        if not payload:
+            continue
+        lower = payload.lower()
+        if "failed password" not in lower and "invalid user" not in lower and "preauth" not in lower:
+            continue
+        if not ev.timestamp:
+            continue
+
+        ip = _extract_ssh_ip(payload)
+        key = ip or "(unknown)"
+        tracker[key] = [(t, u, e) for t, u, e in tracker[key] if ev.timestamp - t <= window]
+        tracker[key].append((ev.timestamp, payload, ev))
+
+        total = len(tracker[key])
+        failures = sum(1 for _, p, _ in tracker[key] if "failed password" in p.lower() or "invalid user" in p.lower())
+        preauth = sum(1 for _, p, _ in tracker[key] if "preauth" in p.lower())
+        if key in alerted or total < 5:
+            continue
+        if not (failures >= 3 or preauth >= 3):
+            continue
+        alerted.add(key)
+        accounts = []
+        seen = set()
+        for _, p, _ in tracker[key]:
+            u = _extract_ssh_user(p)
+            if u and u not in seen:
+                seen.add(u)
+                accounts.append(u)
+        accounts.sort()
+        severity = "critical" if total >= 15 else "high"
+        confidence = "high" if total >= 10 else "medium"
+        # OpenSSH Operational is the authoritative telemetry source for this
+        # technique: the Security log never carries sshd auth outcomes. A
+        # confirmed password-guessing burst (5+ attempts from one source with
+        # at least 3 failures/preauth in 10 minutes) is a standalone finding.
+        # Password guessing is confirmed when every observed attempt failed
+        # (failure_count == total) from a single source, or when there is
+        # substantial volume (8+) regardless of mix.  This matches Security
+        # log brute-force behavior while keeping single stray failures quiet.
+        standalone = (
+            total >= 8
+            or (total >= 5 and failures >= 4)
+            or (total >= 5 and failures == total)
+            or (failures >= 5 and preauth >= 2)
+        )
+        evidence_strength = "high" if standalone else "medium"
+        alerts.append(Alert(
+            rule_name="OpenSSH Brute Force",
+            severity=severity,
+            confidence=confidence,
+            mitre_tactic="Credential Access",
+            mitre_technique="T1110.001",
+            description="{count} SSH authentication failures from {src} in 10 min targeting: {acc}".format(
+                count=total, src=key, acc=", ".join(accounts[:5]) or "unknown users"),
+            explanation="OpenSSH Operational logs show repeated failed password attempts or preauth disconnects from a single source, consistent with password guessing against an exposed SSH service.",
+            investigate_next="Confirm whether SSH is intentionally exposed, review successful sshd logons from {src}, and block the source if external.".format(src=key),
+            event=ev,
+            evidence={
+                "source_ip": key,
+                "count": total,
+                "failure_count": failures,
+                "preauth_count": preauth,
+                "accounts": accounts,
+                "evidence_strength": evidence_strength,
+                "promotion_policy": "standalone" if standalone else "correlate",
+            },
+        ))
+    return alerts
+
+
+_SSH_IP_RE = re.compile(r"(?:from\s+)?([0-9a-fA-F.:]{7,})\s+port\b", re.IGNORECASE)
+_SSH_USER_RE = re.compile(
+    r"(?:Failed password for (?:invalid user )?|Invalid user |authenticating user )([^ ]+?)\s+(?:from\s+)?(?:[0-9a-fA-F.:]{7,})\s+port",
+    re.IGNORECASE,
+)
+def _extract_ssh_ip(payload: str) -> str:
+    m = _SSH_IP_RE.search(payload)
+    return m.group(1) if m else ""
+
+
+def _extract_ssh_user(payload: str) -> str:
+    m = _SSH_USER_RE.search(payload)
+    return m.group(1) if m else ""
+
+
 def _lsass_access(events: List[NormalizedEvent]) -> List[Alert]:
     alerts = []
     suspicious_masks = {"0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff"}
@@ -3863,7 +4009,7 @@ def _kerberoasting(events: List[NormalizedEvent]) -> List[Alert]:
             continue
         if not _is_security_audit(ev):
             continue
-        enc = ev.event_data.get("TicketEncryptionType", "")
+        enc = _normalize_hex_mask(ev.event_data.get("TicketEncryptionType", ""))
         svc = ev.event_data.get("ServiceName", "")
         if enc == "0x17" and "krbtgt" not in (svc or "").lower():
             client = ev.target_user or ""

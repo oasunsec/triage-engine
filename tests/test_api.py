@@ -438,6 +438,27 @@ class APITests(unittest.TestCase):
         self.assertIn("incidents", data)
         self.assertEqual(data["case"]["case_name"], "test-case-alpha")
 
+    def test_jev_review_requires_consent_and_server_key(self):
+        path = "/api/cases/test-case-alpha/jev-review"
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
+            self.assertEqual(self.client.post(path, json={"consent": False}).status_code, 400)
+            self.assertEqual(self.client.post(path, json={"consent": True}).status_code, 503)
+
+    def test_jev_review_is_opt_in_and_does_not_change_case(self):
+        path = "/api/cases/test-case-alpha/jev-review"
+        before = self.client.get("/api/cases/test-case-alpha").json()
+        advisory = {
+            "provider": "typesafe_jev", "model": "jev-latest", "advisory_only": True,
+            "review_focus": {"choice": "routine_review", "label": "Continue ordinary analyst review.", "confidence": 0.8},
+            "prompt_review_probability": 0.2,
+        }
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-only-key"}), patch("server.request_jev_review", return_value=advisory) as jev:
+            response = self.client.post(path, json={"consent": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), advisory)
+        self.assertEqual(jev.call_args.kwargs["api_key"], "test-only-key")
+        self.assertEqual(self.client.get("/api/cases/test-case-alpha").json(), before)
+
     def test_get_case_export_returns_json_attachment(self):
         resp = self.client.get("/api/cases/test-case-alpha/export")
         self.assertEqual(resp.status_code, 200)
@@ -690,10 +711,13 @@ class APITests(unittest.TestCase):
         with open(good_path, "wb") as fh:
             fh.write(b"\x00" * 32)
         with open(bad_path, "wb") as fh:
-            fh.write(b"\x00" * 32)
+            fh.write(b"corrupt evtx payload")
 
         def fake_read_evtx(filepath, start_date=None, end_date=None, progress_callback=None):
-            if os.path.basename(filepath).lower() == "broken.evtx":
+            # Investigations parse the retained, content-addressed copy.
+            with open(filepath, "rb") as source:
+                is_broken = source.read() == b"corrupt evtx payload"
+            if is_broken:
                 raise ValueError("corrupt evtx payload")
             if progress_callback:
                 progress_callback({"status": "file_started", "file_path": filepath})
@@ -868,14 +892,21 @@ class APITests(unittest.TestCase):
                             server._investigate_worker("job-webhook-1", request)
 
         events = [call.args[0] for call in dispatch_mock.call_args_list]
-        self.assertIn("investigation_completed", events)
-        self.assertIn("incident_p1", events)
-        completion_call = next(call for call in dispatch_mock.call_args_list if call.args[0] == "investigation_completed")
+        self.assertIn("case.completed", events)
+        self.assertIn("case.escalated", events)
+        completion_call = next(call for call in dispatch_mock.call_args_list if call.args[0] == "case.completed")
         completion_payload = completion_call.args[1]
         self.assertEqual(completion_payload["case_name"], case_name)
         self.assertEqual(completion_payload["response_priority"], "P1")
         self.assertEqual(completion_payload["incident_count"], 1)
         self.assertIn("incident_ids", completion_payload)
+        self.assertEqual(completion_payload["client_id"], "default")
+        self.assertEqual(completion_payload["triage_disposition"], "No promoted incident")
+        self.assertIn("confidence_score", completion_payload)
+        self.assertIn("summary", completion_payload)
+        self.assertIn("artifact_ref", completion_payload)
+        self.assertIn("event_id", completion_payload)
+        self.assertIn("schema_version", completion_payload)
 
     def test_investigate_worker_sends_only_completion_for_lower_priority(self):
         import server
@@ -912,7 +943,8 @@ class APITests(unittest.TestCase):
                             server._investigate_worker("job-webhook-2", request)
 
         events = [call.args[0] for call in dispatch_mock.call_args_list]
-        self.assertIn("investigation_completed", events)
+        self.assertIn("case.completed", events)
+        self.assertNotIn("case.escalated", events)
         self.assertNotIn("incident_p1", events)
         self.assertNotIn("incident_p2", events)
 
@@ -1511,6 +1543,12 @@ class AuthAPITests(unittest.TestCase):
         self._logout()
         login = self._login("locked-viewer", "Password123!")
         self.assertEqual(login.status_code, 200)
+
+        denied_jev = self.client.post(
+            "/api/cases/auth-case/jev-review",
+            json={"consent": True},
+        )
+        self.assertEqual(denied_jev.status_code, 403)
 
         evtx_path = _create_evtx_stub(self._temp_root, "viewer-denied.evtx")
         denied_investigate = self.client.post(
@@ -2552,8 +2590,12 @@ class StoreMigrationTests(unittest.TestCase):
                     [
                         "review_store:001_initial_schema",
                         "review_store:002_add_missing_columns",
+                        "review_store:003_evidence_link_reviews",
                     ],
                 )
+                tables = {row["name"] for row in migrated.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+                self.assertTrue({"evidence_link_reviews", "analyst_evidence_links"} <= tables)
 
             queue = rs.get_review_queue(case_name="legacy-case")
             self.assertGreaterEqual(len(queue), 1)
@@ -2614,7 +2656,7 @@ class BackupRestoreScriptTests(unittest.TestCase):
         finally:
             con.close()
 
-        restored = restore_backup(backup["backup_path"], data_dir=self._data_dir)
+        restored = restore_backup(backup["backup_path"], data_dir=self._data_dir, service_stopped=True)
         self.assertEqual(restored["backup_id"], backup["backup_id"])
         self.assertEqual(len(restored["files"]), 3)
 
@@ -2634,7 +2676,7 @@ class BackupRestoreScriptTests(unittest.TestCase):
             fh.write(b"tampered")
 
         with self.assertRaises(ValueError):
-            restore_backup(backup["backup_path"], data_dir=self._data_dir)
+            restore_backup(backup["backup_path"], data_dir=self._data_dir, service_stopped=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3102,7 +3144,7 @@ class ReviewAPITests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["content"], "Needs further investigation")
-        self.assertEqual(data["author"], "analyst1")
+        self.assertEqual(data["author"], "review-admin")
 
     def test_add_empty_note_rejected(self):
         resp = self.client.post(
@@ -3244,7 +3286,7 @@ class ReviewAPITests(unittest.TestCase):
         self.assertGreaterEqual(len(note_events), 1)
         latest = note_events[0]
         self.assertEqual(latest["new_value"], "History check note")
-        self.assertEqual(latest["changed_by"], "hist-author")
+        self.assertEqual(latest["changed_by"], "review-admin")
 
     # -- Fix 2: case existence validation --
     def test_get_finding_review_nonexistent_case_404(self):

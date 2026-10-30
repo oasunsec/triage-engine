@@ -128,6 +128,7 @@ SPECIFIC_FINDING_TITLES = {
     "CMSTP UAC Bypass",
     "Volatile SYSTEMROOT UAC Bypass",
     "UAC Bypass via DLL Side-Loading",
+    "DLL Side-Loading / Hijack",
     "WScript Manifest UAC Bypass",
     "Browser Credential Store Access",
     "TSCLIENT Startup Folder Drop",
@@ -3268,6 +3269,19 @@ def _incident_details_from_finding(finding: Finding) -> Tuple[str, str, str, str
             summary,
             "Privilege Escalation -> Abuse Elevation Control Mechanism",
         )
+    if title == "DLL Side-Loading / Hijack":
+        target_process = finding.evidence.get("target_process", "") or finding.process or "a trusted process"
+        loaded_module = finding.evidence.get("loaded_module", "") or "an untrusted DLL"
+        summary = (
+            f"{target_process} on {finding.host or 'unknown host'} loaded {loaded_module}, which is consistent with "
+            "DLL side-loading or search-order hijacking."
+        )
+        return (
+            "dll_side_loading",
+            "DLL side-loading or hijack",
+            summary,
+            "Defense Evasion -> Hijack Execution Flow",
+        )
     if title == "WScript Manifest UAC Bypass":
         manifest_path = finding.evidence.get("manifest_path", "") or "a crafted wscript.exe.manifest"
         summary = (
@@ -3336,10 +3350,9 @@ def _incident_details_from_finding(finding: Finding) -> Tuple[str, str, str, str
         "critical_finding_promotion",
         finding.title or "Critical finding promoted to incident",
         finding.summary or finding.description,
-        " -> ".join(
-            part for part in [finding.evidence.get("source_rule", ""), finding.evidence.get("source_technique", "")]
-            if part
-        ),
+        " -> ".join(part for part in [finding.mitre_tactic, finding.mitre_technique] if part)
+        or finding.technique_summary
+        or finding.evidence.get("source_rule", ""),
     )
 
 

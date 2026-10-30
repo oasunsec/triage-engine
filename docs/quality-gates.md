@@ -4,7 +4,7 @@ These checks run before a public release.
 
 ## Inputs
 
-- `production_readiness.json`
+- `audit-artifacts/production_readiness.json`
 - `competitive_eval.json`
 - `config/release_gate.json`
 - `config/release_gate.ci.json`
@@ -25,6 +25,7 @@ python .\scripts\release_gate.py --config .\config\release_gate.ci.json --strict
 
 The workflow in `.github/workflows/quality-gates.yml` runs:
 
+1. The forensic foundation gate: evidence intake, artifact parsers, evidence links, backups and detection semantics, on Windows and Linux
 1. `python -m unittest tests.test_api`
 2. `python -m unittest tests.test_performance`
 3. `python scripts/competitive_eval.py --manifest config/benchmark/corpus.json --report competitive_eval.json --skip-hayabusa --fail-on-expectation`
@@ -32,6 +33,8 @@ The workflow in `.github/workflows/quality-gates.yml` runs:
 5. `python scripts/release_gate.py --config config/release_gate.ci.json --strict --report release_gate.json`
 
 The CI policy does not require a private `config/tuning/local.json` file on a clean GitHub runner.
+
+When tuning a detector, `competitive_eval.py` can run one sample (`--id`), use several workers (`--jobs 4`), pick up an interrupted run (`--resume`), or re-run only failed samples (`--retry-failed`).
 
 ## Targets
 

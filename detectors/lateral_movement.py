@@ -68,6 +68,7 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts.extend(_remote_hosts_file_discovery(events))
     alerts.extend(_anonymous_smb_service_probe(events))
     alerts.extend(_rdp_authentication_accepted(events))
+    alerts.extend(_rdp_session_hijack(events))
     alerts.extend(_rdp_logon_via_loopback(events))
     alerts.extend(_kerberos_loopback_admin_logon(events))
     alerts.extend(_netsh_portproxy_tunnel(events))
@@ -89,11 +90,79 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     return alerts
 
 
+
+def _rdp_shadowing_registry_event(ev):
+    """Registry-based RDP shadow/Terminal Services policy configuration (Sysmon 12/13, Security 4657).
+
+    Catches shadow config that appears only as a CreateKey/SetValue on the Terminal
+    Services policy key - invisible to the command-line based detector.
+    """
+    if ev.event_id not in (12, 13, 4657):
+        return None
+    provider_context = "{} {}".format(ev.provider or "", ev.channel or "").lower()
+    if "sysmon" not in provider_context and "security-auditing" not in provider_context:
+        return None
+    target = (ev.event_data.get("TargetObject") or ev.event_data.get("ObjectName") or "").strip()
+    target_lower = target.lower()
+    ts_path_markers = (
+        r"\windows nt\terminal services",
+        r"\terminal server\client",
+        r"\software\microsoft\windows nt\currentversion\terminal server\install",
+    )
+    if not any(marker in target_lower for marker in ts_path_markers):
+        return None
+    details = (ev.event_data.get("Details") or ev.event_data.get("NewValue") or "").strip()
+    event_type = (ev.event_data.get("EventType") or "").strip().lower()
+    is_shadow_key = "shadow" in target_lower
+    shadow_value = ""
+    has_shadow_value = False
+    if is_shadow_key and details:
+        match = re.search(r"(?:0x)?([0-9a-fA-F]{1,4})", details)
+        if match:
+            shadow_value = str(int(match.group(1), 16))
+            has_shadow_value = True
+    rule_name = (ev.event_data.get("RuleName") or "").lower()
+    # Sysmon operator explicitly tagged this write as RDP/remote-desktop technique.
+    technique_tagged = "rdp" in rule_name or "remote desktop" in rule_name or "t1076" in rule_name or "t1021" in rule_name
+    return {
+        "registry_target": target,
+        "registry_details": details[:300],
+        "event_type": event_type,
+        "shadow_key": is_shadow_key,
+        "shadow_value": shadow_value,
+        "has_shadow_value": has_shadow_value,
+        "technique_tagged": technique_tagged,
+        "rule_name": (ev.event_data.get("RuleName") or "")[:200],
+        "actor": ev.domain_user or ev.subject_domain_user or ev.event_data.get("User", "") or "unknown",
+    }
+
+
+
 def _rdp_shadowing_enabled(events: List[NormalizedEvent]) -> List[Alert]:
     alerts: List[Alert] = []
     grouped = defaultdict(list)
 
     for ev in sorted((item for item in events if item.timestamp), key=lambda item: item.timestamp):
+        # Registry-only evidence: Sysmon 12/13 or Security 4657 writing the
+        # Terminal Services shadow policy key. This is the common artifact when
+        # shadowing is configured via reg.exe, Group Policy, or the GUI and no
+        # execution command line was captured.
+        registry_info = _rdp_shadowing_registry_event(ev)
+        if registry_info is not None:
+            actor = registry_info["actor"]
+            key = (ev.computer or "unknown", actor)
+            entry = {
+                "event": ev,
+                "registry": registry_info,
+                "command_line": "",
+            }
+            clusters = grouped[key]
+            if clusters and ev.timestamp - clusters[-1][-1]["event"].timestamp <= timedelta(minutes=20):
+                clusters[-1].append(entry)
+            else:
+                clusters.append([entry])
+            continue
+
         if ev.event_id not in (4688, 1, 4104):
             continue
 
@@ -101,53 +170,120 @@ def _rdp_shadowing_enabled(events: List[NormalizedEvent]) -> List[Alert]:
         text_l = text.lower()
         if "remote desktop - shadow (tcp-in)" not in text_l:
             continue
-        if "setdwordvalue" not in text_l or "terminal services" not in text_l or "shadow" not in text_l:
+        if "setdwordvalue" not in text_l and "set-dwordvalue" not in text_l and "set-itemproperty" not in text_l:
             continue
-        if "uvalue=[uint32]2" not in text_l and "uvalue = [uint32]2" not in text_l and "uvalue=2" not in text_l:
+        if "terminal services" not in text_l or "shadow" not in text_l:
+            continue
+        if not any(
+            spell in text_l
+            for spell in (
+                "uvalue=[uint32]2",
+                "uvalue = [uint32]2",
+                "uvalue=2",
+                "-value 2",
+                "-value=2",
+                "set-dwordvalue",
+                "setdwordvalue",
+                ".setdwordvalue(",
+            )
+        ):
             continue
 
         actor = ev.domain_user or ev.subject_domain_user or ev.event_data.get("User", "") or "unknown"
         key = (ev.computer or "unknown", actor)
+        entry = {
+            "event": ev,
+            "registry": None,
+            "command_line": ev.command_line,
+        }
         clusters = grouped[key]
-        if clusters and ev.timestamp - clusters[-1][-1].timestamp <= timedelta(minutes=20):
-            clusters[-1].append(ev)
+        if clusters and ev.timestamp - clusters[-1][-1]["event"].timestamp <= timedelta(minutes=20):
+            clusters[-1].append(entry)
         else:
-            clusters.append([ev])
+            clusters.append([entry])
 
     for (host, actor), clusters in grouped.items():
         for cluster in clusters:
-            first_event = cluster[0]
+            first_event = cluster[0]["event"]
+            registry_evidence = [item["registry"] for item in cluster if item["registry"]]
+            command_lines = [item["command_line"][:500] for item in cluster if item["command_line"]][:5]
+            registry_only = bool(registry_evidence) and not command_lines
+            targets = []
+            shadow_values = []
+            for reg in registry_evidence:
+                if reg.get("registry_target"):
+                    targets.append(reg["registry_target"])
+                if reg.get("has_shadow_value"):
+                    shadow_values.append(reg["shadow_value"])
+
+            has_command_evidence = bool(command_lines)
+            confirmed_shadow = has_command_evidence or bool(shadow_values)
+            shadow_key_seen = any(reg.get("shadow_key") for reg in registry_evidence)
+            technique_tagged = any(reg.get("technique_tagged") for reg in registry_evidence)
+
+            if confirmed_shadow:
+                severity = "critical"
+                confidence = "high"
+                evidence_strength = "high"
+                explanation = (
+                    "The Terminal Services shadow policy was configured to allow interactive RDP session "
+                    "shadowing or remote control with reduced user visibility, confirmed by an explicit "
+                    "command line or a shadow policy registry value."
+                )
+            elif shadow_key_seen or technique_tagged:
+                # Shadow key or an operator-tagged RDP technique write: visible pivot,
+                # but no captured value, so it does not prove shadowing is active.
+                severity = "high"
+                confidence = "medium"
+                evidence_strength = "medium"
+                explanation = (
+                    "The Terminal Services shadow policy key was created or modified (or Sysmon tagged "
+                    "this write as RDP/remote-desktop technique). This can enable interactive RDP session "
+                    "shadowing. No explicit shadow value was captured, so this is a pivot for review "
+                    "rather than a confirmed configuration change."
+                )
+            else:
+                severity = "low"
+                confidence = "low"
+                evidence_strength = "low"
+                explanation = (
+                    "A Terminal Services policy registry key was created or modified. This is not "
+                    "shadow-specific on its own and may be routine RDP configuration; it is surfaced "
+                    "only as context."
+                )
+
+            evidence = {
+                "actor_user": actor,
+                "registry_targets": targets[:5],
+                "shadow_key_seen": shadow_key_seen,
+                "shadow_value": shadow_values[0] if shadow_values else "",
+                "shadow_values": shadow_values[:5],
+                "command_lines": command_lines,
+                "evidence_strength": evidence_strength,
+                "supporting_evidence_only": not confirmed_shadow,
+            }
             alerts.append(
                 Alert(
                     rule_name="RDP Shadowing Enabled",
-                    severity="critical",
+                    severity=severity,
                     mitre_tactic="Lateral Movement",
                     mitre_technique="T1021.001",
-                    description=f"{actor} enabled RDP shadowing on {host}",
-                    explanation=(
-                        "Enabling the Remote Desktop - Shadow firewall rule and setting the Terminal Services shadow policy allows interactive "
-                        "RDP session shadowing or remote control with reduced user visibility."
-                    ),
-                    confidence="high",
+                    description=f"{actor} configured RDP session shadowing or Terminal Services policy on {host}",
+                    explanation=explanation,
+                    confidence=confidence,
                     investigate_next=(
-                        "Review who enabled shadowing, confirm whether the host should allow remote session control, and inspect for follow-on RDP or remote assistance activity."
+                        "Review who enabled shadowing, confirm whether the host should allow remote "
+                        "session control, and inspect for follow-on RDP or remote assistance activity."
                     ),
                     event=first_event,
                     user=actor,
                     process=first_event.process_name,
-                    evidence={
-                        "actor_user": actor,
-                        "firewall_rule": "Remote Desktop - Shadow (TCP-In)",
-                        "registry_subkey": r"Software\Policies\Microsoft\Windows NT\Terminal Services",
-                        "registry_value": "shadow",
-                        "shadow_value": 2,
-                        "command_lines": [item.command_line[:500] for item in cluster if item.command_line][:5],
-                        "evidence_strength": "high",
-                    },
+                    evidence=evidence,
                 )
             )
 
     return alerts
+
 
 
 def _explicit_credential_password_spray(events: List[NormalizedEvent]) -> Tuple[List[Alert], Set[int]]:
@@ -490,6 +626,50 @@ def _rdp_authentication_accepted(events: List[NormalizedEvent]) -> List[Alert]:
             )
 
     return alerts
+
+
+
+
+def _rdp_session_hijack(events):
+    """Detect RDP session hijacking with tscon (T1021.001)."""
+    alerts = []
+    seen = set()
+    tscon_re = re.compile(r"\btscon(?:\.exe)?\s+(\d+)\s+/(?:dest|d):\s*rdp-tcp#\d+", re.IGNORECASE)
+    for ev in sorted((item for item in events if item.timestamp), key=lambda item: item.timestamp):
+        if ev.event_id not in (4688, 1, 4104):
+            continue
+        command = (ev.command_line or "") + " " + (ev.event_data.get("ScriptBlockText", "") or "")
+        match = tscon_re.search(command or "")
+        if not match:
+            continue
+        target_session = match.group(1)
+        actor = _process_user(ev)
+        host = ev.computer or "unknown"
+        key = (host, actor.lower(), target_session)
+        if key in seen:
+            continue
+        seen.add(key)
+        alerts.append(Alert(
+            rule_name="RDP Session Hijack (tscon)",
+            severity="critical",
+            mitre_tactic="Lateral Movement",
+            mitre_technique="T1021.001",
+            description=f"{actor} used tscon to hijack session {target_session} on {host}",
+            explanation="tscon attaches an existing interactive RDP session to the current console/terminal session. When used against another user's active session, this hijacks the session without knowing the user's password, enabling lateral movement and privilege escalation.",
+            confidence="high",
+            investigate_next="Confirm which accounts own the source and target sessions, review the 4778/4779 reconnection events around the tscon execution, and inspect what the hijacked session was used for.",
+            event=ev,
+            user=actor,
+            process=ev.process_name,
+            evidence={
+                "command_line": (command or "")[:400],
+                "target_session": target_session,
+                "actor_user": actor,
+                "evidence_strength": "high",
+            },
+        ))
+    return alerts
+
 
 
 def _rdp_logon_via_loopback(events: List[NormalizedEvent]) -> List[Alert]:

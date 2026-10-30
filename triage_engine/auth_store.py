@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -21,6 +22,9 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _resolve_data_dir() -> str:
     configured = str(os.environ.get("TRIAGE_DATA_DIR", "") or "").strip()
     if not configured:
+        if getattr(sys, "frozen", False):
+            local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+            return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
         return os.path.join(_PROJECT_ROOT, "data")
     expanded = os.path.expanduser(configured)
     if os.path.isabs(expanded):
@@ -337,14 +341,46 @@ def update_user(
 
 
 def bootstrap_admin(username: str, password: str) -> Dict[str, Any]:
-    if has_users():
-        raise ValueError("Bootstrap is only allowed when no users exist")
-    return create_user(username, password, role="admin")
+    """Create the first administrator as a single serialized transaction.
+
+    Checking for existing users before opening the write transaction allowed
+    concurrent bootstrap requests with different usernames to both become
+    administrators.  ``BEGIN IMMEDIATE`` reserves the SQLite writer before
+    the check, so the second request observes the committed first user.
+    """
+    now = _now()
+    password_hash = _hash_password(password)
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+        if row:
+            raise ValueError("Bootstrap is only allowed when no users exist")
+        con.execute(
+            "INSERT INTO users (username, password_hash, role, active, created_at, updated_at, last_login_at) "
+            "VALUES (?, ?, 'admin', 1, ?, ?, '')",
+            (username, password_hash, now, now),
+        )
+        user_row = con.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if not user_row:
+        raise RuntimeError("Bootstrap user creation failed")
+    return _row_to_dict(user_row)
+
+
+_DUMMY_PASSWORD_HASH: Optional[str] = None
+
+
+def _equalize_failed_lookup(password: str) -> None:
+    """Spend one PBKDF2 round so unknown/disabled users are not distinguishable by timing."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = _hash_password(secrets.token_urlsafe(16))
+    verify_password(password, _DUMMY_PASSWORD_HASH)
 
 
 def authenticate_user(username: str, password: str) -> Optional[Dict[str, Any]]:
     user = get_user(username)
     if not user or not user.get("active"):
+        _equalize_failed_lookup(password)
         return None
     if not verify_password(password, user["password_hash"]):
         return None

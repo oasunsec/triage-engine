@@ -4,6 +4,11 @@ This document lists the main environment variables used by the Triage Engine run
 
 Relative paths are resolved from the repository root.
 
+At startup the server loads a local `.env` file when present, or the existing
+`.env.txt` file as a fallback. Process environment variables always take
+precedence. These files are ignored by Git; never copy their secret values into
+`.env.example` or case artifacts.
+
 ## Server Runtime
 
 | Variable | Default | Description |
@@ -12,12 +17,22 @@ Relative paths are resolved from the repository root.
 | `TRIAGE_PORT` | `8000` | API bind port when running `python server.py`. |
 | `TRIAGE_DATA_DIR` | `./data` | Root directory for SQLite state (`auth.db`, `reviews.db`, `jobs.db`) and backups. |
 | `TRIAGE_CASES_DIR` | `./cases` | Root directory for generated case artifacts. |
+| `TRIAGE_UPLOAD_DIR` | `./uploads` (packaged Windows: data directory's `uploads/`) | Temporary upload staging. Compose sets `/app/data/uploads` so it shares the writable data mount. |
 | `TRIAGE_MAX_UPLOAD_MB` | `500` | Maximum upload size per EVTX file (MiB). |
+| `TRIAGE_MAX_AGGREGATE_UPLOAD_MB` | `TRIAGE_MAX_UPLOAD_MB` | Maximum total size for one upload request (MiB). |
+| `TRIAGE_MAX_CONCURRENT_JOBS` | `2` | Maximum investigations executing concurrently. |
+| `TRIAGE_MAX_QUEUED_JOBS` | `8` | Additional investigations admitted to the bounded queue. |
+| `TRIAGE_ALLOWED_PATH_ROOTS` | unset | Absolute evidence roots for local-path investigations; required when `TRIAGE_HOST` is not localhost. |
 | `TRIAGE_CORS_ORIGINS` | `localhost` | Comma-separated CORS origins. `localhost` expands to `http://localhost:<TRIAGE_PORT>` and `http://127.0.0.1:<TRIAGE_PORT>`. |
 | `TRIAGE_SECURE_COOKIES` | `false` | Force `Secure` session cookie flag (`true/false`). |
+| `TRIAGE_BOOTSTRAP_TOKEN` | unset | When set, creating the first admin requires this value. Set it before exposing a fresh install beyond loopback; startup warns if a network-bound server has no admin and no token. |
+| `TRIAGE_TRUSTED_PROXIES` | unset | Comma-separated reverse-proxy IPs whose `X-Forwarded-For` is honored for audit logs, sessions and rate limits. Without it the header is ignored, so clients cannot spoof their address. |
 | `TRIAGE_CSRF_SECRET` | random per process | Optional fixed CSRF HMAC secret for multi-instance consistency. |
 | `TRIAGE_QUEUE_SYNC_INTERVAL_SECONDS` | `30` | Minimum seconds between automatic queue-index sync checks. |
 | `TRIAGE_RUNTIME_MODE` | `local` | Runtime label shown in the dashboard (`local` or `docker`). |
+| `TRIAGE_EDITION` | `community` | Capability profile marker (`community` or `pro`); analysis remains local-first. |
+| `TRIAGE_LICENSE_PATH` | unset | Optional local signed license JSON path. |
+| `TRIAGE_LICENSE_SECRET` | unset | Offline verifier secret; keep outside case exports and source control. |
 
 ## Session Controls
 
@@ -32,6 +47,7 @@ Relative paths are resolved from the repository root.
 |----------|---------|-------------|
 | `TRIAGE_INVESTIGATION_TIMEOUT_SECONDS` | `1800` | Max wall-clock runtime per investigation before fail/timeout. |
 | `TRIAGE_DETECTOR_TIMEOUT_SECONDS` | `30` | Max runtime per detector before timeout isolation. |
+| `TRIAGE_DETECTOR_EXECUTOR` | `process` | Detector execution mode: killable `process` (default) or `thread` for test/embedding callables. |
 | `TRIAGE_PARSE_EXECUTOR` | `serial` | EVTX directory parsing mode: `serial`, `thread`, or `process`. |
 | `TRIAGE_PARSE_WORKERS` | `4` | Worker count used for threaded/process EVTX parsing modes. |
 | `TRIAGE_RAW_XML_MODE` | `auto` | Raw XML preservation mode: `auto`, `all`, or `none`. |
@@ -57,7 +73,15 @@ Relative paths are resolved from the repository root.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRIAGE_WEBHOOK_CONFIG` | `./config/webhooks.json` | Optional override path for webhook endpoint config file. |
+| `TRIAGE_WEBHOOK_CONFIG` | `./config/webhooks.json` | Optional webhook endpoint config path; relative paths resolve from the project root. |
+| `TYPESAFE_API_KEY` | unset | Enables optional server-side TypeSafe Jev case review. Keep this key out of dashboard code and API request bodies. |
+| `TRIAGE_JEV_MODEL` | `jev-latest` | TypeSafe model used by case review; pin a version for a reproducible rollout. |
+
+Canonical webhook events are `case.completed`, `case.escalated`, and `bundle.exported`. Every payload includes `schema_version`, a stable `event_id`, `client_id`, `case_id`, `triage_disposition`, `confidence`, `confidence_score`, `summary`, and `artifact_ref`; legacy `investigation_completed` / `incident_p1` / `incident_p2` subscriptions remain supported as aliases. Retries are bounded (`max_attempts` up to 5, total backoff up to 15 seconds), and the entire dispatch for one event is capped at 45 seconds including per-attempt network timeouts. Endpoint URLs must be absolute `http` or `https` URLs without embedded credentials. Headers such as `X-Triage-Event`, `X-Triage-Event-ID`, and `X-Triage-Schema-Version` are generated by the engine and cannot be overridden in endpoint configuration; custom header names and values must be valid HTTP tokens so configuration cannot smuggle replacement lines.
+
+The case Overview offers an optional **Jev analyst review** to analysts and admins. Each run requires an explicit consent checkbox. The server sends only a bounded allowlist: deterministic priority/disposition, finding and incident counts, telemetry gaps, and up to six incident plus eight finding titles, summaries, severities, and MITRE techniques. These summaries may contain sensitive details; review organizational data-sharing policy before enabling the integration. Raw EVTX, host/user/IP fields, command-line fields, and review notes are excluded from the request body. The Jev response is advisory and never modifies the deterministic case result. The review is returned to the current browser session and is not written into the case artifacts.
+
+The authenticated `POST /api/cases/{case_name}/jev-review` endpoint accepts `{"consent": true}`. It requires `TYPESAFE_API_KEY`, uses the fixed TypeSafe API host, and limits each authenticated user to ten Jev reviews per rate-limit window. Jev returns a suggested first review focus, its confidence and option probabilities, plus the probability that prompt analyst review is warranted. No live TypeSafe request occurs until an analyst starts a review.
 
 ## Regression Harness
 

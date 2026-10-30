@@ -14,7 +14,7 @@ Use this checklist before a pilot or routine use.
 python .\scripts\production_readiness.py
 ```
 
-The script writes `production_readiness.json` in the project root. It reports one of these states:
+The script writes `audit-artifacts/production_readiness.json`. It reports one of these states:
 
 - `not_ready`
 - `pilot_ready_missing_sigma_pack`

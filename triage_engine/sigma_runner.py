@@ -6,7 +6,7 @@ import re
 from typing import Iterable, List, Tuple
 
 from models.event_model import Alert, NormalizedEvent
-from triage_engine.sigma_mapper import event_values, split_modifier
+from triage_engine.sigma_mapper import event_values, split_modifier, supported_field
 
 
 TACTIC_MAP = {
@@ -37,16 +37,15 @@ def _match_scalar(candidate: str, expected, modifier: str) -> bool:
         return text.lower().startswith(str(expected).lower())
     if modifier == "endswith":
         return text.lower().endswith(str(expected).lower())
-    if modifier in {"re", "regex"}:
-        try:
-            return bool(re.search(str(expected), text, re.IGNORECASE))
-        except re.error:
-            return False
+    if modifier:
+        raise ValueError(f"unsupported Sigma modifier '{modifier}'")
     return text.lower() == str(expected).lower()
 
 
 def _selection_matches(event: NormalizedEvent, selection: dict) -> bool:
     for field, expected in selection.items():
+        if not supported_field(field):
+            raise ValueError(f"unsupported Sigma field or modifier '{field}'")
         base, modifier = split_modifier(field)
         candidates = event_values(event, base)
         if isinstance(expected, list):
@@ -59,19 +58,34 @@ def _selection_matches(event: NormalizedEvent, selection: dict) -> bool:
 
 
 def _tokenize(condition: str) -> List[str]:
-    tokens = re.findall(r"\(|\)|\band\b|\bor\b|\bnot\b|[A-Za-z0-9_]+", condition, flags=re.IGNORECASE)
-    return [token.lower() for token in tokens]
+    tokens: List[str] = []
+    position = 0
+    while position < len(condition):
+        if condition[position].isspace():
+            position += 1
+            continue
+        match = re.match(r"\(|\)|[A-Za-z_][A-Za-z0-9_]*", condition[position:])
+        if not match:
+            raise ValueError(f"unsupported character in Sigma condition at position {position}")
+        tokens.append(match.group(0).lower())
+        position += len(match.group(0))
+    if not tokens:
+        raise ValueError("empty Sigma condition")
+    return tokens
 
 
 def _parse_condition(tokens: List[str], values: dict[str, bool]) -> bool:
     position = 0
+    if not tokens:
+        raise ValueError("empty Sigma condition")
 
     def parse_or() -> bool:
         nonlocal position
         result = parse_and()
         while position < len(tokens) and tokens[position] == "or":
             position += 1
-            result = result or parse_and()
+            right = parse_and()
+            result = result or right
         return result
 
     def parse_and() -> bool:
@@ -79,7 +93,8 @@ def _parse_condition(tokens: List[str], values: dict[str, bool]) -> bool:
         result = parse_not()
         while position < len(tokens) and tokens[position] == "and":
             position += 1
-            result = result and parse_not()
+            right = parse_not()
+            result = result and right
         return result
 
     def parse_not() -> bool:
@@ -91,16 +106,26 @@ def _parse_condition(tokens: List[str], values: dict[str, bool]) -> bool:
 
     def parse_primary() -> bool:
         nonlocal position
+        if position >= len(tokens):
+            raise ValueError("expected selector or '(' in Sigma condition")
         token = tokens[position]
         position += 1
         if token == "(":
             result = parse_or()
-            if position < len(tokens) and tokens[position] == ")":
-                position += 1
+            if position >= len(tokens) or tokens[position] != ")":
+                raise ValueError("unbalanced parentheses in Sigma condition")
+            position += 1
             return result
-        return bool(values.get(token, False))
+        if token in {"and", "or", "not", ")"}:
+            raise ValueError(f"unexpected token '{token}' in Sigma condition")
+        if token not in values:
+            raise ValueError(f"unknown Sigma selector '{token}'")
+        return bool(values[token])
 
-    return parse_or()
+    result = parse_or()
+    if position != len(tokens):
+        raise ValueError(f"unexpected token '{tokens[position]}' in Sigma condition")
+    return result
 
 
 def _rule_metadata(rule: dict) -> tuple[str, str, str, str]:
@@ -130,10 +155,20 @@ def evaluate_rules(events: Iterable[NormalizedEvent], rules: Iterable[dict]) -> 
         }
         condition = str(detection.get("condition", "") or "")
         title, severity, tactic, technique = _rule_metadata(rule)
+        try:
+            tokens = _tokenize(condition)
+            # Parse once up front so malformed direct-dict rules are rejected even
+            # when there are no events to evaluate.
+            _parse_condition(tokens, selectors)
+            for selection in selectors.values():
+                _validate_selection(selection)
+        except Exception as exc:
+            diagnostics.append(f"Skipped Sigma rule {title}: {exc}")
+            continue
         for event in events:
             selector_results = {name: _selection_matches(event, selector) for name, selector in selectors.items()}
             try:
-                matched = _parse_condition(_tokenize(condition), selector_results)
+                matched = _parse_condition(tokens, selector_results)
             except Exception as exc:
                 diagnostics.append(f"Skipped Sigma evaluation for {title}: {exc}")
                 break
@@ -163,3 +198,9 @@ def evaluate_rules(events: Iterable[NormalizedEvent], rules: Iterable[dict]) -> 
                 )
             )
     return alerts, diagnostics
+
+
+def _validate_selection(selection: dict) -> None:
+    for field in selection:
+        if not supported_field(field):
+            raise ValueError(f"unsupported Sigma field or modifier '{field}'")

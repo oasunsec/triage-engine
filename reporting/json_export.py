@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from collections import Counter
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 from models.event_model import Alert, AttackChain, Finding, Incident, NormalizedEvent, Signal
@@ -25,6 +27,7 @@ def _iso(ts):
 
 def _raw_event_to_dict(ev: NormalizedEvent) -> Dict[str, Any]:
     payload = {
+        **asdict(ev),
         "event_id": ev.event_id,
         "timestamp": _iso(ev.timestamp),
         "computer": ev.computer,
@@ -50,6 +53,11 @@ def _raw_event_to_dict(ev: NormalizedEvent) -> Dict[str, Any]:
         "status": ev.status,
         "sub_status": ev.sub_status,
         "event_data": dict(ev.event_data),
+        "source_file": ev.source_file,
+        "source_sha256": ev.source_sha256,
+        "record_id": ev.record_id,
+        "observation_id": ev.observation_id,
+        "raw_xml": ev.raw_xml,
     }
     add_user_identity_fields(payload, "user", ev.domain_user, ev.computer)
     add_user_identity_fields(payload, "subject_domain_user", ev.subject_domain_user, ev.computer)
@@ -242,15 +250,26 @@ def _build_raw_event_preview(
 
 def export_raw_events_stream(raw_events: List[NormalizedEvent], filepath: str) -> Dict[str, Any]:
     total_count = 0
-    with open(filepath, "w", encoding="utf-8") as handle:
-        for entry in _iter_raw_event_entries(raw_events):
-            total_count += 1
-            handle.write(json.dumps(sanitize_export_data(entry), separators=(",", ":")))
-            handle.write("\n")
+    temporary = filepath + "." + uuid.uuid4().hex + ".partial"
+    try:
+        with open(temporary, "x", encoding="utf-8") as handle:
+            for event in raw_events:
+                total_count += 1
+                # The display preview may collapse noise. This evidence stream
+                # retains every normalized record and is never demo-redacted.
+                handle.write(json.dumps(_raw_event_to_dict(event), separators=(",", ":")))
+                handle.write("\n")
+        os.replace(temporary, filepath)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
     return {
         "path": filepath,
         "basename": os.path.basename(filepath),
         "format": "jsonl",
+        "schema_version": "1.1",
+        "representation": "lossless_normalized_records",
+        "redacted": False,
         "total_count": total_count,
     }
 
@@ -266,6 +285,8 @@ def export_case(
     case_meta: Optional[Dict[str, Any]] = None,
     raw_event_preview_limit: int = RAW_EVENT_PREVIEW_LIMIT,
     raw_event_artifact_path: Optional[str] = None,
+    forensic_observations: Optional[List[Dict[str, Any]]] = None,
+    evidence_relationships: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     legacy_alerts = legacy_alerts or []
     legacy_chains = legacy_chains or []
@@ -279,6 +300,8 @@ def export_case(
     if raw_event_artifact_path:
         raw_event_summary["artifact_path"] = os.path.basename(raw_event_artifact_path)
         raw_event_summary["artifact_format"] = "jsonl"
+        raw_event_summary["artifact_representation"] = "lossless_normalized_records"
+        raw_event_summary["artifact_redacted"] = False
 
     data: Dict[str, Any] = {
         "case": case_meta,
@@ -314,7 +337,11 @@ def export_case(
             "attack_chains": [c.to_dict() for c in legacy_chains],
         },
         "raw_events": raw_event_preview,
+        "forensic_observations": (forensic_observations or [])[:500],
     }
+    if evidence_relationships is not None:
+        # Additive; complete relationships are in evidence_relationships.json.
+        data["evidence_relationships"] = evidence_relationships[:500]
     data = sanitize_export_data(data)
 
     with open(filepath, "w", encoding="utf-8") as handle:

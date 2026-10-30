@@ -45,10 +45,16 @@ def split_modifier(field: str) -> Tuple[str, str]:
     return base, modifier
 
 
+SUPPORTED_MODIFIERS = {"", "contains", "startswith", "endswith"}
+
+
 def supported_field(field: str) -> bool:
-    base, _ = split_modifier(field)
+    raw = str(field or "")
+    if raw.count("|") > 1:
+        return False
+    base, modifier = split_modifier(raw)
     key = re.sub(r"[^a-z0-9_]", "", base.lower())
-    return key in FIELD_ALIASES or bool(base)
+    return bool(base) and modifier in SUPPORTED_MODIFIERS and key in FIELD_ALIASES
 
 
 def event_values(event: NormalizedEvent, field: str) -> List[str]:

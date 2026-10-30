@@ -1,0 +1,92 @@
+{
+  "name": "public-evtx-expansion",
+  "triage": {
+    "cases_dir": "./audit-cases-public-expansion",
+    "enable_sigma": false,
+    "no_fp_filter": false,
+    "tuning_paths": ["./config/tuning/local.example.json"],
+    "sigma_rules": [],
+    "extra_args": []
+  },
+  "samples": [
+    {
+      "id": "sql-server-command-shell",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0002-Execution/T1059.003-Windows Command Shell/ID4688-SQL Server payload injectection for reverse shell (MSF).evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1059.003"],
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": ["public-evtx", "execution", "sql-server"]
+    },
+    {
+      "id": "repeated-service-execution",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload deployed via service - Tchopper.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1569.002"],
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": ["public-evtx", "execution", "service"]
+    },
+    {
+      "id": "share-permission-weakening",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1222.001-File and Directory Permissions Modification/ID5143-File share permissions changed.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1222.001"],
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "tags": ["public-evtx", "defense-evasion", "share-acl"]
+    },
+    {
+      "id": "pktmon-capture-telemetry",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0006-Credential Access/T1040-Traffic sniffing/ID-4688 Native Windows sniffer Pktmon usage.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1040"],
+      "notes": "Supporting signal only because packet capture is also normal troubleshooting.",
+      "tags": ["public-evtx", "supporting-evidence"]
+    },
+    {
+      "id": "proxy-configuration-telemetry",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0011-Command and Control/T1090-Proxy/ID5600-proxy configuration changed.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1090"],
+      "notes": "Supporting signal only because managed proxies and PAC files are common.",
+      "tags": ["public-evtx", "supporting-evidence"]
+    },
+    {
+      "id": "bitlocker-encryption-telemetry",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0040-Impact/T1486-Data Encrypted for Impact/ID 768,775,793,796,817,840-BitLocker encryption activated.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1486"],
+      "notes": "Supporting signal only; BitLocker activation is not a ransomware verdict.",
+      "tags": ["public-evtx", "supporting-evidence"]
+    },
+    {
+      "id": "valid-account-rdp-parser-gap",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0001-Initial access/T1078-Valid accounts/ID1149-RDP success logins to multiple hosts.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1078"],
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "Cross-host repetition is required; one valid login alone does not establish compromise.",
+      "tags": ["public-evtx", "initial-access", "rdp"]
+    },
+    {
+      "id": "private-key-access-parser-gap",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0006-Credential Access/T1552.004-Unsecured Credentials-Private Keys/ID70-CAPI-Private key accessed Mimikatz.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1552.004"],
+      "expected_min_incidents": 1,
+      "expected_min_findings": 1,
+      "notes": "Native Windows rendering recovers CAPI2 Event 70 attributes when python-evtx cannot render the record.",
+      "tags": ["public-evtx", "credential-access", "private-key"]
+    },
+    {
+      "id": "rdp-shadow-key-telemetry-gap",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0009-Collection/T1125-Video capture/ID13-RDP shadow session configuration enabled (registry).evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1125"],
+      "notes": "The sample records key creation but not a value proving shadowing or capture was enabled.",
+      "tags": ["public-evtx", "telemetry-gap"]
+    }
+  ]
+}

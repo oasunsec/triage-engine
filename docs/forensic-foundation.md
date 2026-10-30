@@ -1,0 +1,30 @@
+# Forensic foundation implementation
+
+Status: first forensic foundation implemented and verified, 2026-10-02 (final checks completed 2026-10-03 UTC).
+
+Authorized outcome: carry the architecture audit into implementation for incident-response teams and consultants, including usable intake beyond EVTX.
+
+Current scope: safe SQLite backups/restore; strict Sigma semantics; lossless normalized event export with provenance; explicit interrupted-job recovery; versioned evidence and analysis manifests; a bounded Windows persistence snapshot bundle, collector script, and CLI investigation path. Existing cases, local operation, and CLI/API contracts must remain usable. Do not collect from the owner's host or modify persistent user state while developing.
+
+Implemented outcome:
+
+- WAL-aware SQLite snapshots include the product database. Restore validates all staged databases and requires an explicit stopped-service acknowledgment.
+- Sigma Boolean expressions are consumed completely and unsupported modifiers fail closed. Regex rules are rejected by the bounded supported subset.
+- Native EVTX inputs are retained before parsing; normalized record exports preserve every model field and source reference. Deduplicated findings retain contributing observations.
+- Stable case identities and unique analysis runs record software/rules/tuning/IOC hashes, completeness, source metadata, and retained output copies. Invalid persistence record schemas preserve verified originals without producing a verdict.
+- Artifact-only and combined CLI investigations accept bounded registry autorun, scheduled task, and service snapshots. Configuration collection times are qualified and do not feed execution incidents/chains. The HTML report adds searchable observations and source locators.
+- Explicit source exports preserve unredacted bytes; default packages exclude them. Export validates the bytes it writes, rejects mixed reruns, protects case evidence/output destinations, and publishes ZIPs atomically.
+- Server startup marks abandoned jobs and their case status interrupted while retaining inputs; automatic rerun is not claimed.
+- A Linux/Windows forensic CI gate covers the foundation and participates in release gating. Its remote execution has not been run in this task.
+
+Completed evidence: audit baseline was 619 passing tests plus 78 passing subtests, 188 skipped. The audit reproduced backup/WAL, Sigma Boolean, and lossy export defects. Raw baseline evidence remains under `runtime/test-output/architecture-audit-2026-10-02/`.
+
+Verification: integrated tests passed 99 tests plus 21 subtests. A broad implementation run found two ingestion regressions (duplicate retained paths and a filename-dependent API fixture); both were repaired, and the affected repair run passed 41 tests plus 12 subtests. Independent review reproduced additional export/read-completeness issues; their final focused regression passed 71 tests plus 23 subtests, and backup/Sigma/collector syntax checks passed 16 tests plus 63 subtests. Logs and XML are retained under `runtime/test-output/forensic-foundation/`. Independent read-only follow-up accepted those fixes and repeated the native reader failure reproduction with the expected warning.
+
+The completed broad regression passed **667 tests plus 153 subtests, 188 skipped**, with one expected duplicate-ZIP warning, exit code 0, in 1,281.16 seconds. Its run began before the final independent-review fixes; the separate **87 focused tests plus 86 subtests** above verify the final changed boundaries and additional regression cases. This is not a claim that the entire broad suite was restarted after those last changes. The structured XML results have zero failures/errors. Skipped corpus checks do not establish real-world detection coverage. The new CI workflow parsed successfully, and `git diff --check` passed.
+
+The real CLI processed a synthetic artifact-only bundle into three observations, one medium configuration finding, and zero incidents. Both report and explicit-source ZIPs verified offline (12 and 15 members respectively). Browser checks confirmed collection-time wording, three rendered observations, search filtering, and an expandable source hash/record locator. These checks used synthetic data; the collector was syntax-checked but never executed against the owner's workstation.
+
+Execution/download adapters are now implemented; see [the forensic expansion record](forensic-expansion.md). Representative benign and incident field fixtures remain required. Forensic memory/disk parsers, offline registry hive parsing, external collector imports, engagement access, distributed scheduling, clean-host packaging acceptance, and representative field pilots remain later stages. Hashes describe consistency rather than authenticity, snapshot timestamps do not prove execution, legacy parser limits still affect normalized records, and SQLite backup consistency is per database rather than an atomic multi-database snapshot. See [artifact intake](forensic-artifacts.md) and the [architecture audit](audits/2026-10-02-architecture-audit.md).
+
+Organization: the new files are `triage_engine/evidence.py`, `triage_engine/forensic_artifacts.py`, `scripts/collect-windows-artifacts.ps1`, six `tests/test_*` regression files, this document, `docs/forensic-artifacts.md`, and the baseline audit under `docs/audits/`. All belong in their existing project directories. Raw results, logs, and synthetic cases are intentionally retained under ignored `runtime/test-output/`; no generated build/distribution copy or unexpected file larger than 20 MiB was found in this task's output. Existing unrelated root/parent files and persistent user state were preserved. The task-owned synthetic report server was stopped after browser checks. Automatic approval review rejected recursive cleanup with the reason “blocked by policy”; the three disposable backup-test directories remain contained under `runtime/temp/forensic-foundation-backup/` (`tmp95omn9_f`, `tmpdvqskdlr`, `tmpz8cp4r46`).

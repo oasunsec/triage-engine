@@ -73,14 +73,42 @@ def ensure_case_dir(cases_root: str, case_name: str, overwrite: bool = False, re
 
 
 def resolve_case_path(cases_root: str, case_ref: str) -> str:
-    if os.path.isabs(case_ref) and os.path.isdir(case_ref):
-        return case_ref
+    """Resolve a case directory while keeping lookups inside ``cases_root``.
 
-    exact = os.path.join(cases_root, case_ref)
+    Case references may be abbreviated (the newest matching case is selected).
+    CLI callers may also provide an absolute case directory, but only when its
+    resolved target remains inside ``cases_root``. This prevents API routes and
+    filesystem callers from using ``..`` segments or symlinks to escape the
+    managed evidence directory.
+    """
+    reference = str(case_ref or "").strip()
+    if not reference:
+        raise FileNotFoundError(f"Case not found: {case_ref}")
+
+    root = os.path.realpath(os.path.abspath(cases_root))
+    exact = os.path.realpath(
+        os.path.abspath(reference if os.path.isabs(reference) else os.path.join(root, reference))
+    )
+    try:
+        contained = os.path.commonpath((root, exact)) == root
+    except ValueError:
+        contained = False
+    # The managed root is never a case itself: "." or an equivalent reference
+    # would otherwise let a single case delete/purge remove every case.
+    if not contained or exact == root:
+        raise FileNotFoundError(f"Case not found: {case_ref}")
+
     if os.path.isdir(exact):
         return exact
 
-    latest = _latest_matching_case(cases_root, case_ref)
+    if os.path.isabs(reference):
+        raise FileNotFoundError(f"Case not found: {case_ref}")
+
+    # Prefix matching operates on direct entries under the managed root, so it
+    # cannot turn an arbitrary path into a case lookup.
+    if os.path.basename(reference) != reference:
+        raise FileNotFoundError(f"Case not found: {case_ref}")
+    latest = _latest_matching_case(root, reference)
     if latest:
         return latest
 

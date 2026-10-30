@@ -17,7 +17,12 @@ RUN python -m pip install --upgrade pip && \
 COPY . /app
 
 RUN python -m pip install ".[server,sigma]" && \
-    mkdir -p /app/data /app/cases /app/uploads
+    groupadd --gid 10001 triage && \
+    useradd --uid 10001 --gid triage --no-create-home triage && \
+    mkdir -p /app/data /app/cases /app/uploads && \
+    chown -R triage:triage /app/data /app/cases /app/uploads
+
+USER 10001:10001
 
 EXPOSE 8000
 

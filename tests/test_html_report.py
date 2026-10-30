@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from reporting.html_report import generate_from_artifacts
+from reporting.html_report import generate_from_artifacts, generate_from_data
 
 
 class HtmlReportPhase42Tests(unittest.TestCase):
@@ -32,6 +32,11 @@ class HtmlReportPhase42Tests(unittest.TestCase):
                         "collection_quality_summary": {
                             "summary": "Security + Sysmon present, PowerShell missing",
                             "telemetry_missing": ["PowerShell"],
+                            "unavailable_sources": ["System"],
+                            "permission_denied_sources": ["Security"],
+                            "warning_count": 1,
+                            "fallback_permission_sources": ["Security"],
+                            "fallback_used": True,
                         },
                         "telemetry_summary": {"present": ["Security", "Sysmon"], "missing": ["PowerShell"]},
                     },
@@ -104,6 +109,16 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertIn("@page { size: auto; margin: 12mm; }", html)
             self.assertIn("renderExecutiveSummary", html)
             self.assertIn("renderMitreMatrix", html)
+            self.assertIn('id="executive-disposition"', html)
+            self.assertIn("confidencePercent", html)
+            self.assertIn("text-background-opacity", html)
+            self.assertIn("detailList('Unreadable channels'", html)
+            self.assertIn("detailList('Collection permission issues'", html)
+            self.assertIn("Partial reads", html)
+            self.assertIn("collectionSummary.unavailable_sources", html)
+            self.assertIn("collectionSummary.fallback_used", html)
+            self.assertIn("collectionSummary.fallback_permission_sources", html)
+            self.assertIn("Fallback after denied access", html)
 
     def test_phase_42_template_has_priority_and_mitre_hooks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,6 +206,26 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertNotIn("</script> and line separators", html)
             self.assertIn("\\u2028", html)
             self.assertIn("\\u2029", html)
+
+
+    def test_generate_from_data_does_not_reopen_persisted_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.html"
+            findings = {
+                "case": {"case_name": "av-blocked", "input_source": "evtx"},
+                "summary": {"signal_count": 1, "finding_count": 1, "incident_count": 0},
+                "signals": [{"id": "s-1", "source_rule": "Potential malware /script"}],
+                "findings": [],
+                "incidents": [],
+                "raw_events": [],
+            }
+            timeline = {"timeline": [], "summary": {"total_rows": 0}}
+            graph = {"nodes": [], "edges": []}
+
+            generate_from_data(findings, timeline, graph, str(report))
+
+            self.assertTrue(report.is_file())
+            self.assertIn("av-blocked", report.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

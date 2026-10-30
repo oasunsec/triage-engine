@@ -16,10 +16,14 @@ dependencies = [
 live = ["pywin32>=306"]
 sigma = ["PyYAML>=6.0"]
 server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7"]
-test = ["httpx>=0.27,<1"]
+test = ["httpx>=0.27,<1", "pytest>=8,<10"]
 
 [project.scripts]
 triage = "triage_engine.cli:main"
 
 [tool.setuptools]
 packages = ["triage_engine", "models", "parser", "detectors", "correlation", "reporting"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", ".tmp", "runtime", "cases", "data", "uploads", "output", "repo_cache", "audit-cases", "audit-artifacts", "artifacts", "triage-api-test-*", "node_modules"]

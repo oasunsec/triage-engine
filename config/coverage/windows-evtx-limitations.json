@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "techniques": {
+    "T1125": {
+      "telemetry_gap": true,
+      "note": "RDP shadow-policy or registry-key creation is supporting evidence; it does not prove that screen or video capture occurred."
+    },
+    "T1547.001": {
+      "note": "A Startup-folder path change is supporting persistence evidence until the redirected directory, modifying process, and later logon execution are correlated."
+    },
+    "T1558.001": {
+      "note": "A successful Kerberos 4624 logon alone cannot prove a Golden Ticket; promotion requires KDC sequence anomalies, forged-ticket tooling, or directory context."
+    }
+  }
+}

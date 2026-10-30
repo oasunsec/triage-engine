@@ -8,6 +8,7 @@ Fallback: legacy ReadEventLog with positional field mapping for known event IDs.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
 from models.event_model import NormalizedEvent
@@ -18,6 +19,81 @@ try:
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
+
+
+_ACCESS_DENIED_TOKENS = (
+    "access is denied",
+    "access denied",
+    "required privilege is not held",
+    "required privilege",
+    "not held by the client",
+    "privilege not held",
+    "error_access_denied",
+    "privilege is not held",
+)
+
+_NOT_FOUND_TOKENS = (
+    "could not be found",
+    "no matching logs found",
+    "not recognized as valid",
+    "cannot find",
+    "channel not found",
+    "not found",
+    "error_file_not_found",
+    "error_path_not_found",
+)
+
+
+def _numeric_win32_code(error: object) -> Optional[int]:
+    # pywintypes.error and OSError commonly carry (code, function, message),
+    # so avoid relying on localized message text for access classification.
+    if isinstance(error, int) and not isinstance(error, bool):
+        return int(error)
+    if isinstance(error, OSError) and error.winerror:
+        return int(error.winerror)
+    args = getattr(error, "args", ()) or ()
+    for value in args:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, (list, tuple)) and value and isinstance(value[0], int):
+            return int(value[0])
+    return None
+
+
+def _classify_numeric_win32_code(code: Optional[int]) -> Optional[str]:
+    if code == 5 or code == 0x5:
+        return "access_denied"
+    if code == 2 or code == 0x2:
+        return "not_found"
+    return None
+
+
+def classify_live_channel_error(error: object) -> str:
+    """Classify a live channel failure for user-facing collection-quality views.
+
+    Win32 log access failures can surface as pywintypes.error tuples, message
+    text, or formatted ``WinError`` strings. Keeping this classification in one
+    place prevents the service and the live-health probe from disagreeing about
+    whether a channel is blocked by permissions or simply unavailable.
+    """
+    message = str(error or "").strip() or (error.__class__.__name__ if error is not None else "")
+    lowered = re.sub(r"\s+", " ", message.lower())
+    numeric_status = _classify_numeric_win32_code(_numeric_win32_code(error))
+    if numeric_status:
+        return numeric_status
+    if any(token in lowered for token in _ACCESS_DENIED_TOKENS):
+        return "access_denied"
+    if re.search(r"\b(?:winerror|error)\s*(?:code\s*)?(?:0x)?0*5\b", lowered):
+        return "access_denied"
+    if re.search(r"\b0x0*5\b", lowered):
+        return "access_denied"
+    if any(token in lowered for token in _NOT_FOUND_TOKENS):
+        return "not_found"
+    if re.search(r"\b(?:winerror|error)\s*(?:code\s*)?(?:0x)?0*2\b", lowered):
+        return "not_found"
+    if re.search(r"\b0x0*2\b", lowered):
+        return "not_found"
+    return "error"
 
 
 def read_live(
@@ -32,6 +108,7 @@ def read_live(
     window_minutes = max(1, int(since_minutes or 30))
     normalized_channels = [c.strip() for c in channels if c and c.strip()]
     events = []
+    completed_channels = 0
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
     cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     if progress_callback:
@@ -58,6 +135,10 @@ def read_live(
             )
         total = 0
         used_legacy = False
+        channel_failed = False
+        channel_succeeded = False
+        channel_partial = False
+        first_poll_done = False
         try:
             query = f"*[System[TimeCreated[@SystemTime>='{cutoff_str}']]]"
             qh = win32evtlog.EvtQuery(
@@ -67,10 +148,28 @@ def read_live(
             while True:
                 try:
                     batch = win32evtlog.EvtNext(qh, 100, -1, 0)
-                except Exception:
+                except Exception as poll_exc:
+                    if not first_poll_done:
+                        raise
+                    channel_partial = True
+                    logging.warning(
+                        "EvtNext stopped early for %s after %d parsed event(s)",
+                        channel,
+                        total,
+                    )
+                    logging.debug("EvtNext early stop: %s", poll_exc)
+                    if progress_callback:
+                        progress_callback(
+                            {
+                                "status": "channel_warning",
+                                "channel": channel,
+                                "message": f"Live channel '{channel}' stopped early after {total} parsed event(s): {poll_exc}",
+                            }
+                        )
                     break
                 if not batch:
                     break
+                first_poll_done = True
                 for eh in batch:
                     try:
                         xml_str = win32evtlog.EvtRender(eh, win32evtlog.EvtRenderEventXml)
@@ -86,32 +185,58 @@ def read_live(
             try: win32evtlog.EvtClose(qh)
             except Exception: pass
             print(f"    {total} events parsed")
+            channel_succeeded = True
         except Exception as e:
             warning_message = f"EvtQuery failed for '{channel}', trying legacy API: {e}"
             logging.warning("  %s", warning_message)
             if progress_callback:
                 progress_callback(
-                    {
-                        "status": "channel_warning",
-                        "channel": channel,
-                        "message": warning_message,
-                    }
+                        {
+                            "status": "channel_warning",
+                            "channel": channel,
+                            "message": warning_message,
+                            "win32_code": _numeric_win32_code(e),
+                        }
                 )
             used_legacy = True
-            fb = _read_legacy(channel, cutoff, progress_callback=progress_callback)
-            events.extend(fb)
-            total = len(fb)
-            print(f"    {total} events (legacy API)")
+            try:
+                fb = _read_legacy(channel, cutoff, progress_callback=progress_callback)
+                events.extend(fb)
+                total = len(fb)
+                channel_succeeded = True
+                print(f"    {total} events (legacy API)")
+            except Exception as legacy_exc:
+                # Both the modern and legacy APIs failed; this channel is
+                # genuinely unreadable and must not be reported as present-but-
+                # quiet telemetry. Emit a terminal failure signal so the service
+                # can exclude it from telemetry accounting.
+                terminal_message = f"Event log channel '{channel}' could not be read ({legacy_exc})"
+                logging.warning(terminal_message)
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "status": "channel_error",
+                            "channel": channel,
+                            "message": terminal_message,
+                            "error": str(legacy_exc),
+                            "win32_code": _numeric_win32_code(legacy_exc),
+                        }
+                    )
+                channel_failed = True
+        if channel_succeeded:
+            completed_channels += 1
         if progress_callback:
             progress_callback(
                 {
                     "status": "channel_complete",
                     "channel": channel,
                     "channel_index": index,
-                    "completed_channels": index,
+                    "completed_channels": completed_channels,
                     "channel_count": len(normalized_channels),
                     "parsed_events": total,
-                    "fallback": used_legacy,
+                    "fallback": bool(used_legacy and channel_succeeded),
+                    "partial": bool(channel_partial),
+                    "failed": bool(channel_failed),
                 }
             )
 
@@ -200,14 +325,6 @@ def _read_legacy(
             break
         win32evtlog.CloseEventLog(hand)
     except Exception as e:
-        warning_message = f"Legacy API failed for '{channel}': {e}"
-        logging.warning(warning_message)
-        if progress_callback:
-            progress_callback(
-                {
-                    "status": "channel_warning",
-                    "channel": channel,
-                    "message": warning_message,
-                }
-            )
+        logging.warning("Legacy API failed for %s: %s", channel, e)
+        raise
     return events

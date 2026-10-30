@@ -8,11 +8,30 @@ Windows endpoint investigation tool for EVTX files and local Windows collection.
 - Collects local Windows telemetry
 - Runs built-in detections and optional Sigma rules
 - Groups alerts into findings and incidents
-- Tracks review status, owners, notes, and dispositions
+- Reads offline forensic copies: Prefetch, registry hives (including Amcache), scheduled task files, `$MFT` and the USN journal, persistence snapshots, and Chromium download history
+- Links event-log records to those artifacts and says what each link shows and does not show
+- Gives each host in a case its own verdict
+- Tracks review status, owners, notes, and dispositions, including decisions on evidence links
 - Writes HTML, Markdown, and JSON case outputs
 - Runs with Python or Docker
 
 ## Screenshots
+
+### Investigation Overview
+
+Case priorities, review workload, and searchable case history.
+
+![Investigation Overview](./screenshots/workspace-overview.png)
+
+### Evidence Links
+
+Source coverage, event-to-artifact links with what each one does and does not show, analyst decisions, and the artifact observations. The case is a public EVTX sample paired with synthetic artifacts.
+
+![Evidence Links](./screenshots/workspace-evidence.png)
+
+### Dark Theme
+
+![Dark Theme](./screenshots/workspace-dark.png)
 
 ### Review Queue
 
@@ -91,6 +110,15 @@ Open `http://127.0.0.1:8000`.
 
 On first run, create the first admin account, run a baseline case, and run an attack case.
 
+On Linux, run the container as your own account so it can write `data/` and `cases/`:
+
+```bash
+mkdir -p data cases
+TRIAGE_CONTAINER_UID="$(id -u)" TRIAGE_CONTAINER_GID="$(id -g)" docker compose up --build
+```
+
+See the [deployment guide](./docs/deployment.md) for upgrades and remote access.
+
 ## Command line
 
 ```bash
@@ -98,6 +126,20 @@ triage investigate --evtx /path/to/logs --case Baseline-Workstation-Case
 ```
 
 On Windows, use a Windows path such as `C:\path\to\logs`.
+
+## Forensic artifacts
+
+Package offline copies you collected, then investigate them alone or with event logs:
+
+```bash
+triage pack-artifacts --host HOST01 --observed-at 2026-10-23T18:50:00Z \
+  --prefetch-source /evidence/Prefetch --task-xml /evidence/Tasks \
+  --registry-hive /evidence/SYSTEM --hive-type system \
+  --output-dir runtime/output/host01-bundle
+triage investigate --evtx /evidence/logs --artifacts runtime/output/host01-bundle --case host01
+```
+
+Originals are hashed and kept. Each observation records its source file, record and what its timestamp means. See [forensic artifact intake](./docs/forensic-artifacts.md) and how the parsers were [checked on a real Windows 11 machine](./docs/real-evidence-validation.md).
 
 ## Case outputs
 
@@ -108,6 +150,7 @@ On Windows, use a Windows path such as `C:\path\to\logs`.
 - `timeline.json`
 - `graph.json`
 - `run_status.json`
+- `forensic_observations.json` and `evidence_relationships.json` when artifacts are supplied
 
 ## Configuration
 

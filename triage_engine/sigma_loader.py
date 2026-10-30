@@ -8,6 +8,7 @@ from typing import Iterable, List, Tuple
 import yaml
 
 from triage_engine.sigma_mapper import split_modifier, supported_field
+from triage_engine.sigma_runner import _parse_condition, _tokenize, _validate_selection
 
 
 def _iter_rule_files(paths: Iterable[str]) -> Iterable[str]:
@@ -43,20 +44,30 @@ def load_rules(paths: Iterable[str]) -> Tuple[List[dict], List[str]]:
                 diagnostics.append(f"Skipped {path} document {idx + 1}: missing detection.condition")
                 continue
             condition = str(detection.get("condition", "") or "").strip()
-            if any(token in condition.lower() for token in ("1 of ", "all of ", "near ", "within ")):
-                diagnostics.append(f"Skipped {path} document {idx + 1}: unsupported condition '{condition}'")
-                continue
             unsupported_fields = []
             for name, selection in detection.items():
                 if name == "condition" or not isinstance(selection, dict):
                     continue
                 for field in selection:
                     if not supported_field(field):
-                        unsupported_fields.append(split_modifier(field)[0])
+                        unsupported_fields.append(str(field))
             if unsupported_fields:
                 diagnostics.append(
-                    f"Skipped {path} document {idx + 1}: unsupported field(s) {', '.join(sorted(set(unsupported_fields)))}"
+                    f"Skipped {path} document {idx + 1}: unsupported field or modifier(s) {', '.join(sorted(set(unsupported_fields)))}"
                 )
+                continue
+            selectors = {
+                str(name).lower(): value
+                for name, value in detection.items()
+                if name != "condition" and isinstance(value, dict)
+            }
+            try:
+                tokens = _tokenize(condition)
+                _parse_condition(tokens, selectors)
+                for selection in selectors.values():
+                    _validate_selection(selection)
+            except (TypeError, ValueError) as exc:
+                diagnostics.append(f"Skipped {path} document {idx + 1}: {exc}")
                 continue
             doc["_rule_path"] = path
             rules.append(doc)

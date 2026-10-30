@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_READINESS = ROOT / "production_readiness.json"
+DEFAULT_READINESS = ROOT / "audit-artifacts" / "production_readiness.json"
 DEFAULT_EVALUATION = ROOT / "competitive_eval.json"
 DEFAULT_REPORT = ROOT / "release_gate.json"
 DEFAULT_CONFIG = ROOT / "config" / "release_gate.json"

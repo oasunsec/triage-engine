@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,9 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _resolve_data_dir() -> str:
     configured = str(os.environ.get("TRIAGE_DATA_DIR", "") or "").strip()
     if not configured:
+        if getattr(sys, "frozen", False):
+            local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+            return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
         return os.path.join(_PROJECT_ROOT, "data")
     expanded = os.path.expanduser(configured)
     if os.path.isabs(expanded):
@@ -165,10 +169,33 @@ def get_jobs_with_uploads() -> List[Dict[str, Any]]:
     """Return completed/failed jobs that still have an upload_path set."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT * FROM jobs WHERE upload_path != '' AND status IN ('completed', 'failed')"
+            "SELECT * FROM jobs WHERE upload_path != '' AND status IN ('completed', 'failed') AND stage != 'interrupted'"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
 def clear_upload_path(job_id: str) -> None:
     update_job(job_id, upload_path="")
+
+
+def reconcile_interrupted_jobs() -> List[Dict[str, Any]]:
+    """Mark orphaned work failed at single-process startup; retain its input.
+
+    Requests are not durably executable yet, so automatic requeue would falsely
+    promise safe recovery. The operator can inspect the retained input and rerun.
+    Call only before this supported installation starts admitting new work.
+    """
+    with _conn() as con:
+        rows = con.execute("SELECT * FROM jobs WHERE status IN ('queued', 'running')").fetchall()
+        recovered = []
+        for row in rows:
+            job = _row_to_dict(row)
+            results = job.get("results") if isinstance(job.get("results"), dict) else {}
+            results["recovery"] = {"previous_status": job["status"], "previous_stage": job["stage"], "automatic_retry": False}
+            message = "Investigation interrupted by server restart; inspect retained input and rerun."
+            con.execute(
+                "UPDATE jobs SET status='failed', stage='interrupted', message=?, error=?, results=?, updated_at=? WHERE job_id=?",
+                (message, "server_restarted", json.dumps(results), _now(), job["job_id"]),
+            )
+            recovered.append({**job, "status": "failed", "stage": "interrupted", "message": message, "error": "server_restarted", "results": results})
+    return recovered

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from models.event_model import Incident, NormalizedEvent
 
@@ -23,7 +23,18 @@ SUPPLEMENTAL_TELEMETRY = {
 }
 
 
-def summarize_telemetry(events: Iterable[NormalizedEvent]) -> Dict[str, object]:
+def summarize_telemetry(
+    events: Iterable[NormalizedEvent],
+    *,
+    readable_channels: Optional[Sequence[str]] = None,
+) -> Dict[str, object]:
+    """Summarize which telemetry sources were actually observed.
+
+    When readable_channels is supplied, a channel that was read without
+    error counts as present even if the lookback window was quiet. Without
+    this, a healthy host with an empty Security log is reported as having
+    missing telemetry and escalated to a misleading Monitor disposition.
+    """
     channels = Counter()
     providers = Counter()
     present = {key: False for key in REQUIRED_TELEMETRY}
@@ -48,6 +59,18 @@ def summarize_telemetry(events: Iterable[NormalizedEvent]) -> Dict[str, object]:
             if marker in channel_lower or marker in provider_lower:
                 if label not in supplemental_present:
                     supplemental_present.append(label)
+
+    # A channel that was read without error counts as present even when the
+    # lookback window was quiet. Live mode passes only successfully-read
+    # channels here, so this never masks a genuinely blocked channel.
+    for channel in readable_channels or []:
+        lowered = (channel or "").strip().lower()
+        if lowered == "security":
+            present["security"] = True
+        if "sysmon" in lowered:
+            present["sysmon"] = True
+        if "powershell" in lowered:
+            present["powershell"] = True
 
     missing = [label for key, label in REQUIRED_TELEMETRY.items() if not present[key]]
     core_present = [label for key, label in REQUIRED_TELEMETRY.items() if present[key]]

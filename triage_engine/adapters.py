@@ -43,7 +43,7 @@ CORROBORATING_RULE_GROUPS = {
 
 def _event_payload(alert: Alert) -> dict:
     event = alert.event
-    return {
+    payload = {
         "rule_name": alert.rule_name,
         "severity": alert.severity,
         "mitre_tactic": alert.mitre_tactic,
@@ -61,10 +61,27 @@ def _event_payload(alert: Alert) -> dict:
         "parent_process": alert.parent_process,
         "service": alert.service,
         "share_name": alert.share_name,
-        "command_line": event.command_line if event else "",
-        "event_id": event.event_id if event else None,
-        "event_data": dict(sorted((event.event_data or {}).items())) if event else {},
+        "command_line": _alert_command_line(alert),
+        "event_id": getattr(event, "event_id", None) if event else None,
+        "event_data": dict(sorted((getattr(event, "event_data", {}) or {}).items())) if event else {},
     }
+    payload.update(_event_source_references(event))
+    if event is None:
+        payload.update({key: alert.evidence[key] for key in ("observation_id", "source_id", "source_record", "source_sha256")
+                        if key in alert.evidence})
+    return payload
+
+
+def _event_source_references(event) -> dict:
+    if event is None:
+        return {}
+    keys = ("observation_id", "source_file", "source_sha256", "record_id")
+    return {key: value for key in keys if (value := getattr(event, key, None)) not in (None, "")}
+
+
+def _alert_command_line(alert: Alert) -> str:
+    event_command = getattr(alert.event, "command_line", "") if alert.event is not None else ""
+    return str(event_command or (alert.evidence or {}).get("command_line", "") or "")
 
 
 def _finding_candidate(alert: Alert, related_alert_count: int, promote_overrides: dict[str, Sequence[str]] | None = None) -> tuple[bool, List[str], str]:
@@ -319,11 +336,11 @@ def alerts_to_signals_findings(
                 parent_process=alert.parent_process,
                 service=alert.service,
                 share_name=alert.share_name,
-                command_line=event.command_line if event else "",
+                command_line=_alert_command_line(alert),
                 recommended_next=alert.investigate_next,
                 promotion_policy=alert.promotion_policy,
-                evidence={**dict(alert.evidence), "promotion_policy": alert.promotion_policy},
-                raw_event_data=dict(event.event_data) if event else {},
+                evidence={**dict(alert.evidence), **_event_source_references(event), "promotion_policy": alert.promotion_policy},
+                raw_event_data=dict(getattr(event, "event_data", {}) or {}) if event else {},
                 ioc_matches=signal_ioc_matches,
                 telemetry_gaps=list(telemetry_gaps or []),
                 rule_source=alert.rule_source,
@@ -378,6 +395,9 @@ def alerts_to_signals_findings(
             confidence=finding_confidence,
             confidence_score=score,
             confidence_factors=factors,
+            mitre_tactic=alert.mitre_tactic,
+            mitre_technique=alert.mitre_technique,
+            technique_summary=alert.mitre_technique,
             description=alert.description,
             summary=alert.explanation,
             first_seen=alert.timestamp,
@@ -394,7 +414,7 @@ def alerts_to_signals_findings(
             parent_process=alert.parent_process,
             service=alert.service,
             share_name=alert.share_name,
-            command_line=event.command_line if event else "",
+            command_line=_alert_command_line(alert),
             recommended_next=alert.investigate_next,
             recommended_pivots=list(alert.recommended_pivots),
             promotion_reasons=promotion_reasons,
@@ -405,6 +425,7 @@ def alerts_to_signals_findings(
                 "recommended_pivots": alert.recommended_pivots,
                 "promotion_policy": promotion_policy,
                 **dict(alert.evidence),
+                **_event_source_references(event),
             },
             ioc_matches=ioc_matches,
         )

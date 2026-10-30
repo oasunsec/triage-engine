@@ -66,6 +66,10 @@ class NormalizedEvent:
     service_name_value: str = ""
     event_data: Dict[str, str] = field(default_factory=dict)
     raw_xml: str = ""
+    source_file: str = ""
+    source_sha256: str = ""
+    record_id: str = ""
+    observation_id: str = ""
 
     @property
     def subject_domain_user(self) -> str:
@@ -318,12 +322,17 @@ class Alert:
             "scheduled_task": self.scheduled_task,
             "registry_key": self.registry_key,
             "event_id": self.event.event_id if self.event else None,
-            "command_line": self.event.command_line if self.event else "",
+            "command_line": self.event.command_line if self.event else str((self.evidence or {}).get("command_line", "") or ""),
             "logon_type": self.event.logon_type_name if self.event else "",
             "parent_process": self.event.parent_process if self.event else "",
             "evidence": self.evidence,
             "raw_event_data": dict(self.event.event_data) if self.event else {},
         }
+        if self.event:
+            for key in ("observation_id", "source_file", "source_sha256", "record_id"):
+                value = getattr(self.event, key, None)
+                if value not in (None, ""):
+                    payload[key] = value
         add_user_identity_fields(payload, "user", self.user, self.host)
         add_user_identity_fields(payload, "subject_user", self.subject_user, self.host)
         add_user_identity_fields(payload, "target_user", self.target_user, self.host)
@@ -455,6 +464,9 @@ class Finding:
     first_seen: Optional[datetime]
     last_seen: Optional[datetime]
     confidence_factors: List[str] = field(default_factory=list)
+    mitre_tactic: str = ""
+    mitre_technique: str = ""
+    technique_summary: str = ""
     signal_ids: List[str] = field(default_factory=list)
     host: str = ""
     user: str = ""
@@ -484,6 +496,9 @@ class Finding:
             "confidence": self.confidence,
             "confidence_score": self.confidence_score,
             "confidence_factors": self.confidence_factors,
+            "mitre_tactic": self.mitre_tactic,
+            "mitre_technique": self.mitre_technique,
+            "technique_summary": self.technique_summary,
             "description": self.description,
             "summary": self.summary,
             "first_seen": _iso(self.first_seen),

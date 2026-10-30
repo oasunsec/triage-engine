@@ -11,7 +11,6 @@ import json
 import os
 import re
 import sys
-import zipfile
 from datetime import datetime
 from typing import Any, List, Optional
 
@@ -32,6 +31,7 @@ from triage_engine.service import (
     write_incident_brief as _write_incident_brief,
     write_summary_txt as _write_summary_txt,
 )
+from triage_engine.product import export_case_bundle
 from triage_engine.tuning import load_tuning
 from triage_engine.tuning_bootstrap import build_local_tuning_profile, write_local_tuning_profile
 
@@ -113,6 +113,9 @@ def _resolve_investigation_input(args: argparse.Namespace) -> tuple[str, str, li
             raise SystemExit("Live mode requires at least one channel.")
         return "live", "live", channels, parse_since(args.since), False
 
+    if getattr(args, "artifacts", None):
+        return args.artifacts, "artifact_bundle", None, None, False
+
     if _is_windows_host():
         channels = _parse_channels(args.channels or DEFAULT_LIVE_CHANNELS)
         if not channels:
@@ -120,7 +123,7 @@ def _resolve_investigation_input(args: argparse.Namespace) -> tuple[str, str, li
         return "live", "live", channels, parse_since(args.since), True
 
     raise SystemExit(
-        "No input source specified. Use --evtx PATH, or run --live on a Windows machine."
+        "No input source specified. Use --evtx PATH, --artifacts DIRECTORY, or run --live on a Windows machine."
     )
 
 
@@ -226,6 +229,11 @@ def cmd_investigate(args: argparse.Namespace) -> int:
         sigma_rule_paths=_sigma_rule_paths(args),
         tuning_paths=args.tuning or [],
         no_fp_filter=args.no_fp_filter,
+        client_id=getattr(args, "client_id", "default") or "default",
+        acquisition_method=getattr(args, "acquisition_method", "local_live" if input_mode == "live" else "upload"),
+        collection_manifest=json.loads(args.collection_manifest) if getattr(args, "collection_manifest", "") else None,
+        artifact_bundle=getattr(args, "artifacts", None),
+        allow_large_ntfs=getattr(args, "allow_large_ntfs", False),
     )
 
     reporter = _ConsoleReporter(use_color=use_color)
@@ -247,9 +255,13 @@ def cmd_investigate(args: argparse.Namespace) -> int:
     print("=" * 64)
     print(f"Case: {result.case_name}")
     print(f"Signals: {result.signal_count} | Findings: {result.finding_count} | Incidents: {result.incident_count}")
+    if "observed_artifact_count" in result.collection_quality_summary:
+        print(f"Forensic observations: {result.collection_quality_summary['observed_artifact_count']} (source meanings preserved)")
+    if result.triage_disposition:
+        print(f"Disposition: {result.triage_disposition.get('disposition', 'Unknown')} ({result.triage_disposition.get('confidence', 'unknown')} confidence)")
     print(f"Artifacts: {result.case_path}")
-    for name in ("timeline.json", "graph.json", "findings.json", "summary.txt", "incident_brief.md", "report.html", "raw_events.jsonl"):
-        print(f"- {name}")
+    for path in result.artifacts.values():
+        print(f"- {os.path.basename(path)}")
     print("=" * 64 + "\n")
     return 0
 
@@ -301,12 +313,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         return 0
 
     output_zip = args.output or os.path.join(os.path.dirname(case_path), f"{case_name}.zip")
-    with zipfile.ZipFile(output_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for root, _, files in os.walk(case_path):
-            for filename in files:
-                full_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(full_path, os.path.dirname(case_path))
-                archive.write(full_path, rel_path)
+    export_case_bundle(case_path, output_zip, include_sources=getattr(args, "include_sources", False))
 
     print(_colorize(f"Created archive: {output_zip}", ANSI_GREEN, use_color=use_color))
     return 0
@@ -416,6 +423,53 @@ def cmd_show_tuning(args: argparse.Namespace) -> int:
 # Argument parser
 # ---------------------------------------------------------------------------
 
+def _expand_artifact_dirs(paths: list[str], suffix: str = "") -> list[str]:
+    """Replace each folder with the regular files beneath it (sorted, links never followed)."""
+    from pathlib import Path
+
+    from triage_engine.path_safety import is_link_or_reparse, reject_path_links
+    expanded: list[str] = []
+    for supplied in paths:
+        folder = Path(supplied)
+        if not folder.is_dir():
+            expanded.append(supplied)
+            continue
+        reject_path_links(folder, "Artifact folder path cannot contain links or junctions")
+        found = []
+        for root, dirs, files in os.walk(folder, followlinks=False):
+            dirs[:] = sorted(name for name in dirs if not is_link_or_reparse(Path(root) / name))
+            for name in files:
+                path = Path(root) / name
+                if (not suffix or name.lower().endswith(suffix)) and not is_link_or_reparse(path) and path.is_file():
+                    found.append(str(path))
+        if not found:
+            raise ValueError(f"Artifact folder contains no usable files: {folder.name}")
+        expanded.extend(sorted(found))
+    return expanded
+
+
+def cmd_pack_artifacts(args) -> int:
+    from triage_engine.artifact_packager import pack_artifacts
+    if len(args.registry_hive) != len(args.hive_type):
+        print("Artifact packaging failed: give one --hive-type for each --registry-hive, in the same order", file=sys.stderr)
+        return 1
+    try:
+        task_xml = _expand_artifact_dirs(args.task_xml)
+        prefetch_source = _expand_artifact_dirs(args.prefetch_source, ".pf")
+        manifest = pack_artifacts(args.output_dir, host=args.host, observed_at=args.observed_at,
+                                  chromium_history=args.chromium_history, pecmd_jsonl=args.pecmd_jsonl,
+                                  prefetch_source=prefetch_source, persistence_records=args.persistence_records,
+                                  pecmd_version=args.pecmd_version, scheduled_task_xml=task_xml,
+                                  registry_hives=list(zip(args.registry_hive, args.hive_type)),
+                                  ntfs_mft=args.ntfs_mft, ntfs_usn_journal=args.ntfs_usn_journal,
+                                  ntfs_volume=args.ntfs_volume, allow_large_ntfs=args.allow_large_ntfs)
+    except (ValueError, OSError) as exc:
+        print(f"Artifact packaging failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Artifact bundle: {manifest}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Triage Engine - Windows incident investigation CLI",
@@ -443,6 +497,8 @@ def build_parser() -> argparse.ArgumentParser:
     inp = inv.add_mutually_exclusive_group(required=False)
     inp.add_argument("--evtx", metavar="PATH", help="EVTX file or directory")
     inp.add_argument("--live", action="store_true", help="Read live Windows event channels")
+    inv.add_argument("--artifacts", metavar="DIRECTORY", help="Verified offline forensic artifact bundle, alone or alongside event input")
+    inv.add_argument("--allow-large-ntfs", action="store_true", help="Accept bundle $MFT/$J members above 64 MiB (up to 8 GiB each)")
     inv.add_argument("--channels", default=DEFAULT_LIVE_CHANNELS, help="Live channels (comma-separated)")
     inv.add_argument("--since", default="30m", help="Lookback for live mode (e.g., 30m, 2h, 1d)")
     inv.add_argument("--start", help="Start date YYYY-MM-DD")
@@ -455,7 +511,29 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--sigma-rules", action="append", default=[], help="Sigma rule file or directory (repeatable)")
     inv.add_argument("--overwrite", action="store_true", help="Overwrite case directory when it exists")
     inv.add_argument("--resume", action="store_true", help="Resume existing/latest versioned case")
+    inv.add_argument("--client-id", default="default", help="MSP client profile ID")
+    inv.add_argument("--acquisition-method", choices=("upload", "local_live", "portable_collector", "remote_collection"), help="Evidence acquisition method")
+    inv.add_argument("--collection-manifest", help="Collection manifest JSON object")
     inv.set_defaults(func=cmd_investigate)
+
+    pack = sub.add_parser("pack-artifacts", help="Package explicitly supplied offline forensic copies with hashes")
+    pack.add_argument("--output-dir", required=True, help="New bundle directory under an existing output parent")
+    pack.add_argument("--host", required=True, help="Declared source host; not this workstation's identity")
+    pack.add_argument("--observed-at", required=True, help="Source collection time with timezone, e.g. 2026-10-02T12:00:00Z")
+    pack.add_argument("--chromium-history", action="append", default=[], help="Standalone offline Chromium History SQLite copy (repeatable)")
+    pack.add_argument("--pecmd-jsonl", action="append", default=[], help="PECmd JSONL export (repeatable)")
+    pack.add_argument("--pecmd-version", default="", help="Actual exporter version; required with --pecmd-jsonl")
+    pack.add_argument("--prefetch-source", action="append", default=[], help="Original .pf evidence or a Prefetch folder (its .pf files), retained and parsed natively (repeatable)")
+    pack.add_argument("--persistence-records", action="append", default=[], help="Existing schema 1.0/1.1 persistence record JSON (repeatable)")
+    pack.add_argument("--task-xml", action="append", default=[], help="Raw Task Scheduler definition file, or a copied System32\\Tasks folder (every file beneath it) (repeatable)")
+    pack.add_argument("--registry-hive", action="append", default=[], help="Offline registry hive copy: NTUSER.DAT, SOFTWARE, SYSTEM or Amcache.hve (repeatable)")
+    pack.add_argument("--hive-type", action="append", default=[], choices=("ntuser", "software", "system", "amcache"),
+                      help="Declared type of each --registry-hive, in the same order")
+    pack.add_argument("--ntfs-mft", action="append", default=[], help="Offline copy of one volume's $MFT")
+    pack.add_argument("--ntfs-usn-journal", action="append", default=[], help="Offline copy of the same volume's $UsnJrnl:$J")
+    pack.add_argument("--ntfs-volume", default="", help="Drive letter the $MFT/$J came from, e.g. C:; otherwise recorded as an assumption")
+    pack.add_argument("--allow-large-ntfs", action="store_true", help="Allow $MFT/$J copies above 64 MiB (up to 8 GiB each, streamed)")
+    pack.set_defaults(func=cmd_pack_artifacts)
 
     sm = sub.add_parser("summarize", help="Summarize existing case artifacts")
     sm.add_argument("--case", required=True, help="Case folder name or prefix")
@@ -467,6 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--cases-dir", default=os.path.join(ROOT_DIR, "cases"), help="Cases root directory")
     ex.add_argument("--zip", action="store_true", help="Create portable ZIP archive")
     ex.add_argument("--output", help="Output path for ZIP archive")
+    ex.add_argument("--include-sources", action="store_true", help="Include retained original evidence and lossless records (unredacted; requires --zip)")
     ex.set_defaults(func=cmd_export)
 
     tune = sub.add_parser("tuning-init", help="Bootstrap a local tuning profile from a completed case")
