@@ -70,7 +70,7 @@ from triage_engine.export_sanitizer import apply_demo_redaction_text
 from triage_engine.export_sanitizer import sanitize_export_data
 from triage_engine.evidence import atomic_json, bind_event_sources, capture_evidence, case_identity, public_sources, write_analysis_manifest
 from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.forensic_correlation import correlate_evidence, cross_source_alerts
+from triage_engine.forensic_correlation import configured_binary_links, correlate_evidence, cross_source_alerts
 from triage_engine.executable_inventory import build_executable_inventory
 from triage_engine import __version__
 from triage_engine.evidence_scope import build_evidence_scope
@@ -2116,6 +2116,12 @@ def run_investigation(
         correlation_enabled = os.environ.get("TRIAGE_FORENSIC_CORRELATION", "1").strip() != "0"
         if forensic and events and correlation_enabled:
             relationships, relationship_coverage = correlate_evidence(events, forensic.observations, ntfs=forensic.ntfs)
+            # Service and task events are logged by default; link them to the binaries they name.
+            binary_links, binary_counts = configured_binary_links(events, forensic.observations, ntfs=forensic.ntfs)
+            relationships.extend(binary_links)
+            relationship_coverage.setdefault("families", {})["configured_binaries"] = {
+                "status": "observed" if binary_counts.get("events") else "no_records",
+                "count": binary_counts.get("events", 0), **{key: value for key, value in binary_counts.items() if key != "events"}}
             alerts.extend(cross_source_alerts(relationships, events, alerts))
         # Artifact-first view: needs no event records, never raises alerts.
         executable_inventory = (build_executable_inventory(forensic.observations, ntfs=forensic.ntfs,

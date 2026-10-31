@@ -109,6 +109,8 @@ from triage_engine.review_store import (
     sync_queue_index_from_case_payload,
     get_all_finding_reviews,
     get_all_incident_reviews,
+    get_evidence_link_reviews,
+    list_analyst_evidence_links,
     delete_case_review_state,
     VALID_STATUSES,
     VALID_DISPOSITIONS,
@@ -287,7 +289,10 @@ TRUSTED_PROXIES = {
 }
 REPORT_CSP = (
     "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
-    "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    # Reports are self-contained (the graph library is inlined), so they need no network at all:
+    # evidence text rendered in a report cannot fetch or beacon anywhere.
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; "
+    "connect-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 )
 BOOTSTRAP_TOKEN = str(os.environ.get("TRIAGE_BOOTSTRAP_TOKEN", "") or "").strip()
 RUNTIME_MODE = _runtime_mode_from_env(os.environ.get("TRIAGE_RUNTIME_MODE", DEFAULT_RUNTIME_MODE))
@@ -3279,6 +3284,42 @@ async def patch_case_metadata(case_name: str, request: Request, body: CaseMetada
     return metadata.to_dict()
 
 
+def _review_summary_markdown(case_path: str, snapshot: Dict[str, Any]) -> str:
+    """Readable record of analyst decisions for whoever receives the bundle."""
+    titles: Dict[str, str] = {}
+    try:
+        with open(os.path.join(case_path, "findings.json"), "r", encoding="utf-8") as fh:
+            findings = json.load(fh)
+        for kind in ("findings", "incidents"):
+            for item in findings.get(kind, []) or []:
+                titles[str(item.get("id"))] = str(item.get("title") or item.get("id"))
+    except (OSError, ValueError):
+        pass
+    lines = [f"# Analyst review: {snapshot['case_name']}", "",
+             "Decisions recorded in the review workspace at export time. Engine outputs in this bundle are unchanged.", ""]
+    for label, key in (("Incidents", "incidents"), ("Findings", "findings")):
+        reviews = snapshot.get(key) or {}
+        lines += [f"## {label}", ""]
+        if not reviews:
+            lines += ["No reviews recorded.", ""]
+            continue
+        for item_id, review in sorted(reviews.items()):
+            lines.append(f"- **{titles.get(item_id, item_id)}** (`{item_id}`): {review.get('status') or 'Open'}"
+                         f"{' / ' + review['disposition'] if review.get('disposition') else ''}"
+                         f"{', owner ' + review['owner'] if review.get('owner') else ''}")
+        lines.append("")
+    links = snapshot.get("evidence_links") or {}
+    lines += ["## Evidence link decisions", ""]
+    lines += [f"- `{link_id}`: {review.get('decision')} by {review.get('reviewed_by') or 'unknown'}"
+              f"{' (' + review['rationale'] + ')' if review.get('rationale') else ''}" for link_id, review in sorted(links.items())] \
+        or ["No evidence-link decisions recorded."]
+    lines += ["", "## Analyst-asserted links", ""]
+    lines += [f"- `{link.get('source_observation_id')}` → `{link.get('target_observation_id')}`: {link.get('claim')}"
+              f" ({link.get('decision') or 'unreviewed'}, by {link.get('created_by') or 'unknown'})"
+              for link in snapshot.get("analyst_links") or []] or ["No analyst-asserted links."]
+    return "\n".join(lines) + "\n"
+
+
 @app.post("/api/cases/{case_name}/bundle", tags=["Cases"])
 async def create_case_bundle(case_name: str, request: Request):
     """Create a sanitized-by-scope ZIP of the case artifacts for download."""
@@ -3294,17 +3335,20 @@ async def create_case_bundle(case_name: str, request: Request):
     output_path = os.path.join(export_dir, f"triage-{resolved_name}-{uuid.uuid4().hex[:10]}.zip")
     try:
         review_snapshot = {
-            "schema_version": "1.0",
+            "schema_version": "1.1",  # 1.1 adds evidence-link decisions and analyst-asserted links
             "case_name": resolved_name,
             "findings": get_all_finding_reviews(resolved_name),
             "incidents": get_all_incident_reviews(resolved_name),
+            "evidence_links": get_evidence_link_reviews(resolved_name),
+            "analyst_links": list_analyst_evidence_links(resolved_name),
             "history": get_all_history(case_name=resolved_name),
         }
         export_case_bundle(
             case_path,
             output_path,
             client_id=metadata.client_id if metadata else "default",
-            extra_payloads={"review_state.json": json.dumps(review_snapshot, indent=2, sort_keys=True).encode("utf-8")},
+            extra_payloads={"review_state.json": json.dumps(review_snapshot, indent=2, sort_keys=True).encode("utf-8"),
+                            "analyst_review.md": _review_summary_markdown(case_path, review_snapshot).encode("utf-8")},
         )
     except (OSError, ValueError) as exc:
         raise HTTPException(500, f"Case bundle creation failed: {exc}")

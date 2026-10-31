@@ -20,12 +20,13 @@ from typing import Iterable
 
 from models.event_model import Alert, NormalizedEvent
 
-SCHEMA_VERSION = "1.2"  # 1.1 adds configuration-change links and contradictions; 1.2 NTFS links and assumptions
+SCHEMA_VERSION = "1.3"  # 1.1 configuration-change links; 1.2 NTFS links and assumptions; 1.3 configured-binary links
 RULES = {
     "configured_action_matches_process_image": "1",
     "prefetch_run_matches_process_creation": "1",
     "configuration_event_matches_record": "1",
     "process_image_matches_file_record": "1",
+    "configured_binary_matches_artifacts": "1",
 }
 # Events that record a configuration change, keyed to the snapshot record kind.
 CONFIG_EVENTS = {
@@ -680,3 +681,177 @@ def _usn_create_links(bucket, ntfs, si_obs, creates, assumptions) -> list[dict]:
                 ],
             })
     return links
+
+
+# ---- configured binaries: default-logged events to the files they name ----------------------------
+
+# Prefetch runs at most this long before a configuration event still count as "after" (clock skew).
+CONFIGURED_RUN_SKEW = timedelta(seconds=5)
+
+
+def configured_binary_links(events: Iterable[NormalizedEvent], observations: list[dict], *, ntfs=None) -> tuple[list[dict], dict]:
+    """Link service/task configuration events to artifacts for the executable they configure.
+
+    Process-creation telemetry (Sysmon 1, Security 4688) is off by default, so
+    most real hosts produce no process links. Service installs (7045, 4697) and
+    task creations (4698, 4702) are logged by default and name an executable.
+    For that path this finds the $MFT file record, the Amcache entry and any
+    Prefetch run recorded after the event. Linked $MFT observations are appended
+    to ``observations``.
+    """
+    from triage_engine.executable_inventory import _prefetch_path, command_target, volume_path
+
+    wanted: dict[str, list[tuple[NormalizedEvent, str, str, list[str]]]] = defaultdict(list)
+    counts = Counter()
+    for event in events:
+        parsed = _event_configuration(event)
+        if not parsed or parsed[0] == "registry_run" or parsed[1] == "deleted":
+            continue
+        kind, change, _key, command = parsed
+        if not event.observation_id or event.timestamp is None or event.timestamp.tzinfo is None:
+            continue
+        counts["events"] += 1
+        path, assumptions = command_target(command)
+        if not path:
+            counts["unresolved_command"] += 1
+            continue
+        drive = re.match(r'^\s*"?(?:\\\?\?\\)?([a-z]:)', str(command or ""), re.I)
+        wanted[path].append((event, kind, change, assumptions + ([] if drive else ["The configured path names no drive; the supplied volume is assumed."])))
+    if not wanted:
+        return [], dict(counts)
+
+    by_path: dict[str, list[dict]] = defaultdict(list)
+    for observation in observations:
+        kind, details = observation.get("kind"), observation.get("details") or {}
+        if kind == "amcache_file":
+            path, _ = volume_path(details.get("path", ""))
+        elif kind == "prefetch_run":
+            path, _ = volume_path(_prefetch_path(details))
+        else:
+            continue
+        if path in wanted:
+            by_path[path].append(observation)
+
+    links: list[dict] = []
+    file_entries = {}
+    known = {observation["id"] for observation in observations}
+    if ntfs is not None and ntfs.mft is not None:
+        mft = ntfs.mft
+        for path, entries in mft.lookup_paths(wanted).items():
+            in_use = [entry for entry in entries if mft.flags[mft.name_record[entry]] & 2]
+            if in_use:
+                file_entries[path] = in_use[0]
+    for path, configured in wanted.items():
+        for event, kind, change, assumptions in configured[:MAX_CANDIDATES]:
+            host = _host_key(event.computer)
+            if path in file_entries:
+                links.append(_binary_file_link(event, kind, change, path, ntfs, file_entries[path], assumptions))
+                counts["file_records"] += 1
+            elif ntfs is not None and ntfs.mft is not None:
+                counts["binary_absent_at_collection"] += 1
+            for observation in by_path.get(path, []):
+                if _host_key(observation.get("host", "")) != host:
+                    continue
+                if observation["kind"] == "amcache_file":
+                    links.append(_binary_amcache_link(event, kind, change, path, observation, assumptions))
+                    counts["amcache_entries"] += 1
+            runs = sorted((observation for observation in by_path.get(path, [])
+                           if observation["kind"] == "prefetch_run" and _host_key(observation.get("host", "")) == host
+                           and (_parse_time(observation.get("timestamp")) or event.timestamp) >= event.timestamp - CONFIGURED_RUN_SKEW),
+                          key=lambda item: item.get("timestamp") or "")
+            if runs:
+                links.append(_binary_run_link(event, kind, change, path, runs, assumptions))
+                counts["runs_after_event"] += 1
+    if ntfs is not None:
+        observations.extend(item for key, item in ntfs.materialized.items() if key not in known)
+    return links, dict(counts)
+
+
+def _binary_link(event, kind, change, path, target, rule_type, link_class, matched, establishes, does_not, *,
+                 contradictions=(), inferred=(), related=(), time_relation=None, assumptions=()) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "relationship_id": _relationship_id("configured_binary_matches_artifacts", event.observation_id, target["id"]),
+        "type": rule_type,
+        "rule": {"name": "configured_binary_matches_artifacts", "version": RULES["configured_binary_matches_artifacts"]},
+        "link_class": link_class,
+        "source": {**_event_ref(event), "configuration_change": change,
+                   "configuration": f"{MECHANISM[kind]} {event.service_name or (event.event_data or {}).get('TaskName', '')}".strip()},
+        "target": _artifact_ref(target),
+        "related_observation_ids": list(related),
+        "matched_fields": [{"event_field": "configured executable (path without drive)", "artifact_field": "path",
+                            "value": path},
+                           {"event_field": "computer", "artifact_field": "host", "event_value": event.computer,
+                            "artifact_value": target.get("host", "")}, *matched],
+        "time_relation": time_relation or {"event_time": event.timestamp.isoformat(), "artifact_time": target.get("timestamp"),
+                                           "artifact_time_semantics": target.get("time_semantics", ""), "ordering_meaningful": False},
+        "inferred_claims": list(inferred),
+        "assumptions": list(assumptions),
+        "contradictions": list(contradictions),
+        "ambiguity": {"candidate_events": 1, "truncated": False},
+        "establishes": establishes,
+        "does_not_establish": does_not,
+    }
+
+
+def _binary_file_link(event, kind, change, path, ntfs, entry, assumptions) -> dict:
+    si_obs, fn_obs = ntfs.file_observations(entry)
+    details = fn_obs["details"]
+    times = {"mft_standard_information": _ntfs_times(si_obs), "mft_file_name": _ntfs_times(fn_obs)}
+    created = _parse_time(times["mft_file_name"]["created"])
+    # An earlier $SI creation alone is routine (installers, servicing); only the whole-second
+    # pattern carries over. The file's details keep both comparisons.
+    contradictions = [dict(item) for item in details.get("contradictions", []) if item.get("field") == "precision"]
+    relation = None
+    if created is not None:
+        delta = (created - event.timestamp).total_seconds()
+        relation = "written_before_event" if delta <= CLOCK_SKEW.total_seconds() else "written_after_event"
+        if relation == "written_after_event":
+            contradictions.append({"field": "created", "event_value": event.timestamp.isoformat(),
+                                   "artifact_value": times["mft_file_name"]["created"],
+                                   "meaning": "The file now at this path was created after the event; it may have been "
+                                              "replaced, or the service or task was reinstalled."})
+    return _binary_link(
+        event, kind, change, path, fn_obs, "configured_binary_file_record", "observed_field_match", [],
+        [f"The $MFT at collection has a file at the {MECHANISM[kind]}'s configured executable path."],
+        ["That this file is the one present when the event was recorded.", "That the $MFT timestamps are unaltered.",
+         "That the configured command ran."],
+        contradictions=contradictions, related=[si_obs["id"]], assumptions=assumptions,
+        time_relation={"event_time": event.timestamp.isoformat(), "artifact_time": times["mft_file_name"]["created"],
+                       "artifact_time_semantics": "mft_file_name", "artifact_times": times,
+                       "file_created_relative_to_event": relation,
+                       "seconds_from_event_to_file_creation": None if created is None else round((created - event.timestamp).total_seconds(), 3),
+                       "ordering_meaningful": created is not None})
+
+
+def _binary_amcache_link(event, kind, change, path, observation, assumptions) -> dict:
+    details = observation.get("details") or {}
+    matched = [{"event_field": "configured executable", "artifact_field": "details.sha1", "value": details.get("sha1", "")}] \
+        if details.get("sha1") else []
+    return _binary_link(
+        event, kind, change, path, observation, "configured_binary_amcache_entry", "observed_field_match", matched,
+        ["Amcache inventoried a file at the configured executable path" + (", with the recorded SHA-1." if details.get("sha1") else ".")],
+        ["That the inventoried file is the one configured at the time of the event.",
+         "That the file executed; Amcache records presence, not execution.",
+         "The SHA-1 covers at most the first 30 MiB of the file."],
+        assumptions=assumptions)
+
+
+def _binary_run_link(event, kind, change, path, runs, assumptions) -> dict:
+    first = runs[0]
+    run_time = _parse_time(first.get("timestamp"))
+    return _binary_link(
+        event, kind, change, path, first, "configured_binary_ran_after_event", "supported_inference",
+        [{"event_field": "event time", "artifact_field": "Prefetch run time", "event_value": event.timestamp.isoformat(),
+          "artifact_value": first.get("timestamp")}],
+        [f"Prefetch records a run of the executable at the configured path after the {MECHANISM[kind]} event "
+         f"({len(runs)} recorded run time(s) after it)."],
+        ["That the run was started by this service or task.", "Which account ran it.",
+         "That the binary was unchanged between the event and the run."],
+        inferred=[{"class": "supported_inference",
+                   "claim": f"The configured executable ran after the {MECHANISM[kind]} was {change}.",
+                   "basis": ["same_host", "same_full_path", "run_after_event"]}],
+        related=[run["id"] for run in runs[1:8]], assumptions=assumptions,
+        time_relation={"event_time": event.timestamp.isoformat(), "artifact_time": first.get("timestamp"),
+                       "artifact_time_semantics": first.get("time_semantics", ""), "ordering_meaningful": True,
+                       "seconds_from_event_to_first_run": None if run_time is None else round((run_time - event.timestamp).total_seconds(), 3)})

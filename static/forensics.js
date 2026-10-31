@@ -18,6 +18,11 @@ const LINK_CLASS_LABELS = {
   analyst_hypothesis: 'Analyst hypothesis',
 };
 
+const ARTIFACT_LABELS = {
+  ntfs_file: 'file on disk ($MFT)', amcache_file: 'Amcache entry', prefetch_run: 'Prefetch run', service: 'service (registry)',
+  scheduled_task: 'scheduled task definition', registry_run: 'Run key value', usn_change: 'USN journal record',
+};
+
 function linkClassBadge(value) {
   return `<span class="badge link-class link-${esc(value)}">${esc(LINK_CLASS_LABELS[value] || value || 'unknown')}</span>`;
 }
@@ -150,7 +155,7 @@ function renderForensicLinks() {
     const fields = (link.matched_fields || []).map(field => `<li><code>${esc(field.event_field)}</code> = <code>${esc(field.artifact_field)}</code>: ${esc(field.value || `${field.event_value} / ${field.artifact_value}`)}</li>`).join('');
     const contradictions = (link.contradictions || []).map(item => `<li>${esc(item.field)}: event <code>${esc(item.event_value)}</code>, artifact <code>${esc(item.artifact_value)}</code>. ${esc(item.meaning)}</li>`).join('');
     const inferred = (link.inferred_claims || []).map(claim => `<li>${linkClassBadge(claim.class)} ${esc(claim.claim)} <small>(${(claim.basis || []).map(esc).join(', ')})</small></li>`).join('');
-    return `<details class="timeline-entry"><summary><span>${linkClassBadge(link.link_class)}</span><span><strong>${esc(source.process || (source.configuration ? `${source.configuration} ${source.configuration_change || ''}`.trim() : '') || source.channel || 'Event')} ↔ ${esc(target.artifact_kind)}</strong><small>${esc((link.rule || {}).name)} v${esc((link.rule || {}).version)} · ${esc((link.review || {}).decision || 'unreviewed')}${(link.contradictions || []).length ? ' · contradiction' : ''}</small></span></summary>
+    return `<details class="timeline-entry"><summary><span>${linkClassBadge(link.link_class)}</span><span><strong>${esc(source.process || (source.configuration ? `${source.configuration} ${source.configuration_change || ''}`.trim() : '') || source.channel || 'Event')} ↔ ${esc(ARTIFACT_LABELS[target.artifact_kind] || target.artifact_kind)}</strong><small>${esc((link.rule || {}).name)} v${esc((link.rule || {}).version)} · ${esc((link.review || {}).decision || 'unreviewed')}${(link.contradictions || []).length ? ' · contradiction' : ''}</small></span></summary>
       <div class="timeline-evidence">
         <p><b>Event record:</b> ${esc(source.event_id)} in ${esc(source.channel)}, record ${esc(source.record_id)} at ${esc(source.timestamp)} (${esc(source.time_semantics)})<br><small>${esc(source.source_file)} · sha256 ${esc(source.source_sha256)} · ${esc(source.observation_id)}</small></p>
         <p><b>Artifact record:</b> ${esc(target.artifact_kind)} record ${esc(target.source_record)} at ${esc(target.timestamp)} (${esc(target.time_semantics)})<br><small>${esc(target.source_file)} · sha256 ${esc(target.source_sha256)} · ${esc(target.observation_id)}</small></p>

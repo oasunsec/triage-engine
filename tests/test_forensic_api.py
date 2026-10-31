@@ -119,6 +119,22 @@ class ForensicAPITests(unittest.TestCase):
         history = self.viewer.get(f"/api/cases/mixed-case/evidence-links/{self.relationship_id}/history").json()["history"]
         self.assertEqual({row["field"] for row in history}, {"decision", "rationale"})
 
+    def test_exported_bundle_carries_link_decisions_and_a_readable_review(self):
+        import io
+        import zipfile
+        from unittest.mock import patch
+        self.analyst.patch(f"/api/cases/mixed-case/evidence-links/{self.relationship_id}/review",
+                           json={"decision": "confirmed", "rationale": "Hash matches vendor build"})
+        with patch.object(self.server, "DATA_ROOT", str(self._root / "data")):
+            response = self.analyst.post("/api/cases/mixed-case/bundle")
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+            state = json.loads(bundle.read("review_state.json"))
+            summary = bundle.read("analyst_review.md").decode("utf-8")
+        self.assertEqual(state["schema_version"], "1.1")
+        self.assertEqual(state["evidence_links"][self.relationship_id]["decision"], "confirmed")
+        self.assertIn(f"`{self.relationship_id}`: confirmed by analyst (Hash matches vendor build)", summary)
+
     def test_invalid_and_unknown_link_ids_and_decisions_are_rejected(self):
         base = "/api/cases/mixed-case/evidence-links"
         self.assertEqual(self.analyst.patch(f"{base}/..%2F..%2Fx/review", json={"decision": "confirmed"}).status_code, 404)

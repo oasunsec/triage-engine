@@ -227,6 +227,23 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertTrue(report.is_file())
             self.assertIn("av-blocked", report.read_text(encoding="utf-8"))
 
+    def test_report_is_self_contained_for_offline_use(self):
+        import re
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.html"
+            generate_from_data({"case": {"case_name": "offline"}, "summary": {}, "signals": [], "findings": [],
+                                "incidents": [], "raw_events": []},
+                               {"timeline": [], "summary": {}}, {"nodes": [], "edges": []}, str(report))
+            html = report.read_text(encoding="utf-8")
+        self.assertIn("cytoscape 3.34.3, MIT", html)
+        self.assertNotIn("unpkg.com", html)
+        self.assertEqual(re.findall(r'<(?:script|link)[^>]+(?:src|href)="https?://', html), [])
+
+    def test_served_report_policy_blocks_all_network_access(self):
+        import server
+        for directive in ("default-src 'none'", "connect-src 'none'", "sandbox allow-scripts"):
+            self.assertIn(directive, server.REPORT_CSP)
+
     def test_report_embeds_bounded_artifact_rows_but_every_alert_row(self):
         # A real workstation bundle produced 25,879 artifact rows, a 71 MB embedded timeline.
         from reporting.html_report import _bounded_timeline

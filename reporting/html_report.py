@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
 from triage_engine.display import display_input_source
@@ -42,6 +43,19 @@ def generate_from_artifacts(
 
 
 REPORT_ARTIFACT_ROWS = 1000
+# Bundled so reports render their graph offline (reports are opened on IR laptops without network).
+GRAPH_LIBRARY = Path(__file__).resolve().parents[1] / "static" / "vendor" / "cytoscape-3.34.3.min.js"
+
+
+def _graph_library_tag() -> str:
+    try:
+        code = GRAPH_LIBRARY.read_text(encoding="utf-8")
+    except OSError:
+        return "<!-- Graph library not bundled; the entity graph tab explains this. -->"
+    if "</script" in code.lower():
+        raise ValueError("Bundled graph library cannot be inlined safely")
+    return "<script>/* cytoscape 3.34.3, MIT */\n" + code + "</script>"
+
 
 
 def _bounded_timeline(timeline_data: Dict[str, Any], limit: int = REPORT_ARTIFACT_ROWS) -> Dict[str, Any]:
@@ -88,7 +102,7 @@ def generate_from_data(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Triage Case Report</title>
-<script src="https://unpkg.com/cytoscape@3/dist/cytoscape.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+__GRAPH_LIBRARY__
 <style>
 :root {
   --bg: #eef2f7;
@@ -1045,7 +1059,7 @@ function renderGraph() {
   if (!window.cytoscape || !(GRAPH.nodes || []).length) {
     pivot.textContent = window.cytoscape
       ? 'Graph data unavailable.'
-      : 'Graph viewer could not load (offline or blocked). Entity data remains in graph.json.';
+      : 'The graph library is not bundled in this report. Entity data remains in graph.json.';
     return;
   }
   const nodes = (GRAPH.nodes || []).map(node => ({ data: { ...node.data, display: graphNodeLabel(node.data) } }));
@@ -1267,7 +1281,7 @@ renderAll();
         .replace("__TIMELINE_JSON__", _safe_json_for_script(timeline_data))
         .replace("__GRAPH_JSON__", _safe_json_for_script(graph_data))
         .replace("__GENERATED_AT__", _safe_json_for_script(generated))
-    )
+    ).replace("__GRAPH_LIBRARY__", _graph_library_tag(), 1)
 
     with open(output_path, "w", encoding="utf-8") as handle:
         handle.write(html)
