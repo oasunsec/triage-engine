@@ -81,14 +81,12 @@ from triage_engine.job_store import (
     clear_upload_path,
     reconcile_interrupted_jobs,
 )
-from triage_engine.jev import DEFAULT_JEV_MODEL, JevIntegrationError, review_case as request_jev_review
 from triage_engine.product import (
     ACQUISITION_METHODS,
     CaseMetadata,
     ClientProfile,
     ClientStore,
     CollectionManifest,
-    AIProvider,
     capabilities,
     load_license_file,
     export_case_bundle,
@@ -147,7 +145,6 @@ DEFAULT_DATA_DIR = "data"
 DEFAULT_CASES_DIR = "cases"
 DEFAULT_CORS_ORIGINS = "localhost"
 DEFAULT_TRUSTED_HOSTS = "localhost,127.0.0.1,[::1],testserver"
-DEFAULT_AI_ALLOWED_HOSTS = "api.openai.com,api.groq.com,api.anthropic.com,localhost,127.0.0.1,[::1]"
 DEFAULT_MAX_UPLOAD_MB = 500
 DEFAULT_MAX_CONCURRENT_JOBS = 2
 DEFAULT_MAX_QUEUED_JOBS = 8
@@ -275,11 +272,6 @@ TRUSTED_HOSTS = [
     for value in str(os.environ.get("TRIAGE_TRUSTED_HOSTS", DEFAULT_TRUSTED_HOSTS) or "").split(",")
     if value.strip()
 ] or ["localhost", "127.0.0.1", "[::1]"]
-AI_ALLOWED_HOSTS = {
-    value.strip().lower().strip("[]")
-    for value in str(os.environ.get("TRIAGE_AI_ALLOWED_HOSTS", DEFAULT_AI_ALLOWED_HOSTS) or "").split(",")
-    if value.strip()
-}
 # X-Forwarded-For is only honored from these reverse-proxy peers; otherwise any
 # client could spoof its address to evade per-IP login throttling.
 TRUSTED_PROXIES = {
@@ -486,9 +478,6 @@ async def _rate_limit_result(
     elif method == "POST" and path.startswith("/api/investigate"):
         identity = (user or {}).get("username") or ip
         checks.append((f"investigate:{identity}", 10, "Rate limit exceeded for investigation starts"))
-    elif method == "POST" and path.endswith("/jev-review"):
-        identity = (user or {}).get("username") or ip
-        checks.append((f"jev-review:{identity}", 10, "Rate limit exceeded for Jev reviews"))
     elif method == "POST" and path.startswith("/api/quick/"):
         checks.append((f"quick-write:{ip}", 8, "Too many Quick Check requests"))
     elif method == "GET" and path.startswith("/api/quick/jobs/"):
@@ -971,25 +960,6 @@ def _validate_acquisition_method(value: Optional[str], *, default: str) -> str:
     if method not in ACQUISITION_METHODS:
         raise HTTPException(400, f"Invalid acquisition_method. Must be one of: {', '.join(ACQUISITION_METHODS)}")
     return method
-
-
-def _validate_ai_endpoint(value: str) -> str:
-    """Constrain AI connectors to explicit hosts and loopback-only HTTP."""
-    endpoint = str(value or "").strip().rstrip("/")
-    try:
-        parsed = urlsplit(endpoint)
-    except ValueError:
-        raise HTTPException(400, "AI endpoint is invalid")
-    host = str(parsed.hostname or "").strip().lower().strip("[]")
-    if parsed.scheme not in {"http", "https"} or not host:
-        raise HTTPException(400, "AI endpoint must be an absolute http or https URL")
-    if parsed.username or parsed.password:
-        raise HTTPException(400, "AI endpoint must not contain embedded credentials")
-    if host not in AI_ALLOWED_HOSTS:
-        raise HTTPException(400, "AI endpoint host is not allowed; configure TRIAGE_AI_ALLOWED_HOSTS")
-    if parsed.scheme == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
-        raise HTTPException(400, "Non-loopback AI endpoints must use https")
-    return endpoint
 
 
 def _product_store() -> ClientStore:
@@ -1722,17 +1692,6 @@ class CaseMetadataResponse(BaseModel):
 
 class PurgeCaseResponse(BaseModel):
     purged: str
-
-
-class AISummaryRequest(BaseModel):
-    endpoint: str
-    model: str = "gpt-4o-mini"
-    api_key: str = ""
-    consent: bool = False
-
-
-class JevReviewRequest(BaseModel):
-    consent: bool = False
 
 
 class JobDeleteRequest(BaseModel):
@@ -3373,73 +3332,6 @@ async def create_case_bundle(case_name: str, request: Request):
         filename=filename,
         background=BackgroundTask(lambda: os.path.exists(output_path) and os.remove(output_path)),
     )
-
-
-@app.post("/api/cases/{case_name}/ai-summary", tags=["Cases"])
-async def create_ai_summary(case_name: str, request: Request, body: AISummaryRequest):
-    """Optionally rewrite a deterministic summary through an OpenAI-compatible endpoint."""
-    user = _require_user(request, ("analyst", "admin"))
-    if not body.consent:
-        raise HTTPException(400, "Explicit consent is required before sending case data to an AI endpoint")
-    endpoint = _validate_ai_endpoint(body.endpoint)
-    try:
-        case_path = resolve_case_path(CASES_ROOT, case_name)
-    except FileNotFoundError:
-        raise HTTPException(404, f"Case not found: {case_name}")
-    findings_path = os.path.join(case_path, "findings.json")
-    if not os.path.isfile(findings_path):
-        raise HTTPException(404, "findings.json not found for this case")
-    with open(findings_path, "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-    deterministic = {
-        "schema_version": "1.0",
-        "case": payload.get("case", {}),
-        "summary": payload.get("summary", {}),
-        "incidents": payload.get("incidents", []),
-        "findings": payload.get("findings", []),
-    }
-    # Never transmit raw_events.jsonl, collection payloads, credentials, or
-    # review notes through this endpoint.
-    endpoint_lower = endpoint.lower()
-    env_key_name = "GROQ_API_KEY" if "groq" in endpoint_lower else "ANTHROPIC_API_KEY" if "anthropic" in endpoint_lower else "OPENAI_API_KEY"
-    api_key = body.api_key or os.environ.get(env_key_name, "")
-    try:
-        summary = AIProvider(endpoint, enabled=True, api_key=api_key, model=body.model).summarize(deterministic)
-    except RuntimeError as exc:
-        raise HTTPException(502, str(exc))
-    record_audit_event(actor_username=user["username"], action="ai_summary", target_username=os.path.basename(case_path), details={"endpoint": endpoint, "model": body.model, "consent": True})
-    return {"schema_version": "1.0", "assisted": True, "deterministic": True, "summary": summary or ""}
-
-
-@app.post("/api/cases/{case_name}/jev-review", tags=["Cases"])
-def create_jev_review(case_name: str, request: Request, body: JevReviewRequest):
-    """Return an opt-in, advisory TypeSafe Jev judgment on a bounded case summary."""
-    user = _require_user(request, ("analyst", "admin"))
-    if not body.consent:
-        raise HTTPException(400, "Explicit consent is required before sending case data to Jev")
-    api_key = os.environ.get("TYPESAFE_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(503, "TYPESAFE_API_KEY is not configured on the server")
-    try:
-        case_path = resolve_case_path(CASES_ROOT, case_name)
-    except FileNotFoundError:
-        raise HTTPException(404, f"Case not found: {case_name}")
-    findings_path = os.path.join(case_path, "findings.json")
-    if not os.path.isfile(findings_path):
-        raise HTTPException(404, "findings.json not found for this case")
-    with open(findings_path, "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-    model = os.environ.get("TRIAGE_JEV_MODEL", DEFAULT_JEV_MODEL).strip()
-    record_audit_event(
-        actor_username=user["username"],
-        action="jev_review_requested",
-        target_username=os.path.basename(case_path),
-        details={"provider": "typesafe_jev", "model": model, "consent": True},
-    )
-    try:
-        return request_jev_review(payload, api_key=api_key, model=model)
-    except (JevIntegrationError, ValueError) as exc:
-        raise HTTPException(502, str(exc)) from exc
 
 
 @app.get(

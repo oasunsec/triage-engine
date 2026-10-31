@@ -5,7 +5,6 @@ import zipfile
 from pathlib import Path
 
 from triage_engine.product import (
-    AIProvider,
     CaseMetadata,
     ClientProfile,
     ClientStore,
@@ -200,8 +199,6 @@ class ProductWorkflowTests(unittest.TestCase):
         self.assertTrue(pro["client_profiles"])
         self.assertTrue(pro["bundle_export"])
         self.assertTrue(pro["remote_collection"])
-        self.assertIsNone(AIProvider().summarize({"disposition": "Monitor"}))
-        self.assertIsNone(AIProvider(endpoint="https://example.invalid", enabled=False).summarize({}))
 
     def test_offline_license_signing_and_expiry(self):
         record = sign_license({"edition": "pro", "licensee": "Acme", "features": ["webhooks"]}, "test-secret")

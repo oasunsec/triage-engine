@@ -52,15 +52,6 @@ For an explicitly authorized Windows PowerShell remoting workflow, use
 does not persist them, and emits the same versioned manifest. Review firewall,
 WinRM, least-privilege, and host-allowlist policy before using remote mode.
 
-## Optional AI summaries
-
-The `/api/cases/{case_name}/ai-summary` endpoint is disabled unless the caller
-sets explicit consent and supplies an HTTP(S) OpenAI-compatible endpoint. It
-sends only deterministic case summaries, findings, and incidents; raw event
-streams and review notes are excluded. AI output is marked assisted content and
-cannot change findings, confidence, or disposition. Leaving the endpoint
-unused preserves fully offline operation.
-
 ## Upgrade and uninstall
 
 Inno Setup overwrites only files under `Program Files\Triage Engine`. The data and cases directories are created under `%ProgramData%` and are not listed in `[UninstallDelete]`. Therefore an upgrade preserves cases, jobs, reviews, users, and reports, and uninstall removes the executable payload while leaving evidence to survive uninstall for deliberate administrative cleanup.

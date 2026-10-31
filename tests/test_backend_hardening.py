@@ -83,21 +83,6 @@ class ClientAddressTests(unittest.TestCase):
             server._reset_security_state_for_tests()
 
 
-class IntegrationEndpointValidationTests(unittest.TestCase):
-    def test_ai_endpoint_is_allowlisted_and_http_is_loopback_only(self):
-        import server
-
-        self.assertEqual(server._validate_ai_endpoint("https://api.openai.com/v1/"), "https://api.openai.com/v1")
-        self.assertEqual(server._validate_ai_endpoint("http://127.0.0.1:1234/v1"), "http://127.0.0.1:1234/v1")
-        for endpoint in (
-            "http://169.254.169.254/latest/meta-data",
-            "https://attacker.example/v1",
-            "https://user:secret@api.openai.com/v1",
-        ):
-            with self.assertRaises(HTTPException):
-                server._validate_ai_endpoint(endpoint)
-
-
 class BackendApiStateTests(unittest.TestCase):
     def setUp(self):
         import server

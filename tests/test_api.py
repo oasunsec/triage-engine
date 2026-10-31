@@ -438,27 +438,6 @@ class APITests(unittest.TestCase):
         self.assertIn("incidents", data)
         self.assertEqual(data["case"]["case_name"], "test-case-alpha")
 
-    def test_jev_review_requires_consent_and_server_key(self):
-        path = "/api/cases/test-case-alpha/jev-review"
-        with patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
-            self.assertEqual(self.client.post(path, json={"consent": False}).status_code, 400)
-            self.assertEqual(self.client.post(path, json={"consent": True}).status_code, 503)
-
-    def test_jev_review_is_opt_in_and_does_not_change_case(self):
-        path = "/api/cases/test-case-alpha/jev-review"
-        before = self.client.get("/api/cases/test-case-alpha").json()
-        advisory = {
-            "provider": "typesafe_jev", "model": "jev-latest", "advisory_only": True,
-            "review_focus": {"choice": "routine_review", "label": "Continue ordinary analyst review.", "confidence": 0.8},
-            "prompt_review_probability": 0.2,
-        }
-        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-only-key"}), patch("server.request_jev_review", return_value=advisory) as jev:
-            response = self.client.post(path, json={"consent": True})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), advisory)
-        self.assertEqual(jev.call_args.kwargs["api_key"], "test-only-key")
-        self.assertEqual(self.client.get("/api/cases/test-case-alpha").json(), before)
-
     def test_get_case_export_returns_json_attachment(self):
         resp = self.client.get("/api/cases/test-case-alpha/export")
         self.assertEqual(resp.status_code, 200)
@@ -1543,12 +1522,6 @@ class AuthAPITests(unittest.TestCase):
         self._logout()
         login = self._login("locked-viewer", "Password123!")
         self.assertEqual(login.status_code, 200)
-
-        denied_jev = self.client.post(
-            "/api/cases/auth-case/jev-review",
-            json={"consent": True},
-        )
-        self.assertEqual(denied_jev.status_code, 403)
 
         evtx_path = _create_evtx_stub(self._temp_root, "viewer-denied.evtx")
         denied_investigate = self.client.post(

@@ -1570,9 +1570,6 @@ async function assignQueueItemToMe(caseName, itemType, itemId, currentStatus = '
 
 // --- Case detail ---
 let _caseData = null;
-let _jevReview = null;
-let _jevReviewBusy = false;
-let _jevReviewError = '';
 let _detailTarget = { tab: 'overview', itemType: '', itemId: '' };
 
 let caseRequestId = 0;
@@ -1580,9 +1577,6 @@ async function openCase(name, options = {}) {
   if (!authState.authenticated) { openAuthOverlay(); return; }
   const requestId = ++caseRequestId;
   _caseData = null;
-  _jevReview = null;
-  _jevReviewBusy = false;
-  _jevReviewError = '';
   document.getElementById('detail-stats').innerHTML = '';
   const exportButton = document.getElementById('detail-bundle-btn');
   if (exportButton) { exportButton.disabled = true; exportButton.onclick = null; }
@@ -1681,57 +1675,6 @@ function showDetailTab(tab, btn, name) {
   }
 }
 
-function renderJevReview(name) {
-  if (!canReviewMutate()) return '';
-  const result = _jevReview;
-  const resultContent = result ? `<div class="section-kicker" style="margin-top:12px">Suggested first focus</div>
-    <div style="font-weight:650">${esc(result.review_focus?.label || 'Analyst review')}</div>
-    <div class="detail-chip-row" style="margin-top:10px">
-      <span class="detail-chip">Focus confidence: ${confidencePercent(result.review_focus?.confidence)}%</span>
-      <span class="detail-chip">Prompt review probability: ${confidencePercent(result.prompt_review_probability)}%</span>
-      <span class="detail-chip">Model: ${esc(result.model || 'Jev')}</span>
-    </div>` : '';
-  return `<details class="card details-card" id="jev-review-card"${result || _jevReviewBusy || _jevReviewError ? ' open' : ''}>
-    <summary>Optional AI second opinion (Jev)</summary>
-    <p class="scope-note">TypeSafe AI judgment. It never changes the deterministic disposition or the case evidence. It sends the priority, disposition, counts, telemetry gaps, and up to six incident and eight finding titles, summaries, severities and MITRE techniques. Raw EVTX and review notes are not sent.</p>
-    ${resultContent}
-    <label class="consent-row">
-      <input id="jev-consent" type="checkbox" onchange="document.getElementById('jev-review-button').disabled = !this.checked || _jevReviewBusy">
-      I agree to send this case summary to TypeSafe AI for this review.
-    </label>
-    <div class="auth-actions" style="margin-top:10px">
-      <button class="btn btn-sm btn-primary" id="jev-review-button" onclick='runJevReview(${jsv(name)})' disabled>${_jevReviewBusy ? 'Reviewing…' : result ? 'Run again' : 'Run Jev review'}</button>
-      <span class="scope-note">Requires TYPESAFE_API_KEY on the server.</span>
-    </div>
-    <div role="status" aria-live="polite" class="scope-note" style="color:var(--red)">${esc(_jevReviewError)}</div>
-  </details>`;
-}
-
-async function runJevReview(name) {
-  if (_jevReviewBusy || !canReviewMutate() || !document.getElementById('jev-consent')?.checked) return;
-  const requestId = caseRequestId;
-  _jevReviewBusy = true;
-  _jevReviewError = '';
-  const card = document.getElementById('jev-review-card');
-  if (card) card.outerHTML = renderJevReview(name);
-  try {
-    const result = await apiJSON('/api/cases/' + encodeURIComponent(name) + '/jev-review', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({consent: true}),
-    });
-    if (requestId !== caseRequestId || currentPage !== 'case-detail') return;
-    _jevReview = result;
-  } catch (error) {
-    if (requestId !== caseRequestId || currentPage !== 'case-detail') return;
-    _jevReviewError = error?.message || 'Jev review failed.';
-  } finally {
-    if (requestId === caseRequestId && currentPage === 'case-detail') {
-      _jevReviewBusy = false;
-      const currentCard = document.getElementById('jev-review-card');
-      if (currentCard) currentCard.outerHTML = renderJevReview(name);
-    }
-  }
-}
-
 function showDetailTabContent(tab, name, data) {
   if (tab === 'timeline') { loadEvidenceTimeline(name); return; }
   if (tab === 'evidence') { loadForensicEvidence(name); return; }
@@ -1790,7 +1733,6 @@ function showDetailTabContent(tab, name, data) {
           <div><dt>Input</dt><dd>${esc(cs.input_source_display || displayInputSource(cs.input_source || ''))}</dd></div>
         </dl>
       </section>
-      ${renderJevReview(name)}
       <div class="overview-columns">
         <section class="card">
           <div class="card-title">Collection quality</div>

@@ -603,36 +603,6 @@ def verify_case_bundle(bundle_path: str) -> Dict[str, Any]:
             "failures": failures,
         }
 
-class AIProvider:
-    """Opt-in OpenAI-compatible narrative adapter.
-
-    The caller must explicitly enable it and provide an endpoint. The input is
-    a caller-selected deterministic summary; this adapter never receives raw
-    events implicitly and cannot alter findings or dispositions.
-    """
-    def __init__(self, endpoint: str = "", enabled: bool = False, api_key: str = "", model: str = ""):
-        self.endpoint, self.enabled, self.api_key, self.model = endpoint.rstrip("/"), enabled, api_key, model or "gpt-4o-mini"
-    def summarize(self, deterministic_payload: Dict[str, Any]) -> Optional[str]:
-        if not self.enabled or not self.endpoint: return None
-        body = json.dumps({"model": self.model, "temperature": 0, "messages": [
-            {"role": "system", "content": "Rewrite the supplied deterministic incident summary clearly. Do not add facts, findings, confidence, or recommendations."},
-            {"role": "user", "content": json.dumps(deterministic_payload, sort_keys=True)},
-        ]}).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if self.api_key: headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(self.endpoint + "/chat/completions", data=body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                raw = json.loads(response.read(512 * 1024).decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise RuntimeError(f"AI summary request failed: {exc}") from exc
-        try:
-            return str(raw["choices"][0]["message"]["content"]).strip() or None
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RuntimeError("AI provider returned an unexpected response") from exc
-
-
-@dataclass
 class LicenseRecord:
     edition: str
     licensee: str = ""
