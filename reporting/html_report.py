@@ -149,6 +149,11 @@ tr:hover td { background: #f8fbff; }
 .graph-legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
 .graph-legend-item { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: #fff; font-size: 12px; }
 .graph-legend-swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.graph-legend-ring { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 3px solid; box-sizing: border-box; }
+.graph-replay { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; flex-wrap: wrap; }
+.graph-replay input[type=range] { flex: 1; min-width: 160px; }
+.graph-facts dt { font-weight: 600; margin-top: 6px; }
+.graph-facts dd { margin: 0; overflow-wrap: anywhere; }
 .split { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
 .search { margin-bottom: 8px; }
 input[type='text'] { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; }
@@ -313,18 +318,31 @@ details > summary { cursor: pointer; color: var(--accent); }
 </section>
 
 <section id="graph-panel" class="panel">
-  <div class="graph-legend" aria-label="Entity graph legend">
-    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#f97316"></span>Observed entry point</span>
-    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#dc2626"></span>Suspected attacker</span>
-    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#7c3aed"></span>Pivot point</span>
-    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#64748b"></span>Supporting entity</span>
+  <div class="graph-legend" aria-label="Entity types">
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#16a34a"></span>Host</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#d97706"></span>Account</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#dc2626"></span>IP address</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#2563eb"></span>Service</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#0891b2"></span>Process</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#475569"></span>Command line</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#9333ea"></span>Registry key</span>
+  </div>
+  <div class="graph-legend" aria-label="Investigation roles">
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#f97316"></span>Ring: observed entry point (source address)</span>
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#991b1b"></span>Ring: suspected attacker (external source)</span>
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#111827"></span>Ring: pivot (most connected)</span>
+  </div>
+  <div class="graph-replay" aria-label="Replay interactions in time order">
+    <button type="button" id="graph-play" onclick="toggleGraphReplay()">&#9654; Replay</button>
+    <input type="range" id="graph-step" min="0" max="0" value="0" oninput="showGraphStep(Number(this.value), false)" aria-label="Replay step">
+    <span id="graph-step-label" class="subtle">All interactions shown.</span>
   </div>
   <div class="split">
     <div id="graph"></div>
     <div>
       <div class="incident-card">
-        <h3>Pivot Context</h3>
-        <p class="subtle">Click a host, user, or IP node to pivot the rest of the report. Process and command nodes show evidence context without applying a filter.</p>
+        <h3>Selection</h3>
+        <p class="subtle">Click a node or a line. Hosts, accounts and IP addresses also filter the rest of the report. Line labels name the detection that links two entities; &times;N counts alerts.</p>
         <div id="pivot-details" class="details">No selection yet.</div>
       </div>
     </div>
@@ -1009,6 +1027,18 @@ function renderTimeline() {
   });
 }
 
+let graphSteps = [];
+let graphTimer = null;
+
+function graphNodeLabel(data) {
+  const value = String(data.label || data.value || '');
+  return `${data.type_label || data.type || ''}\n${value.length > 42 ? value.slice(0, 40) + '…' : value}`;
+}
+
+function graphTime(value) {
+  return value ? String(value).replace('T', ' ').slice(0, 19) : 'time unknown';
+}
+
 function renderGraph() {
   if (cy) return;
   const pivot = document.getElementById('pivot-details');
@@ -1018,41 +1048,91 @@ function renderGraph() {
       : 'Graph viewer could not load (offline or blocked). Entity data remains in graph.json.';
     return;
   }
-
+  const nodes = (GRAPH.nodes || []).map(node => ({ data: { ...node.data, display: graphNodeLabel(node.data) } }));
   cy = cytoscape({
     container: document.getElementById('graph'),
-    elements: [...(GRAPH.nodes || []), ...(GRAPH.edges || [])],
+    elements: [...nodes, ...(GRAPH.edges || [])],
     style: [
-      { selector: 'node', style: { 'label': 'data(label)', 'font-size': 10, 'background-color': '#1d4ed8', 'color': '#111', 'text-valign': 'top', 'text-margin-y': -6, 'text-wrap': 'wrap', 'text-max-width': 90, 'text-background-color': '#fff', 'text-background-opacity': 0.85, 'text-background-padding': 2 } },
-      { selector: 'edge', style: { 'width': 2, 'line-color': '#94a3b8', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#94a3b8', 'curve-style': 'bezier' } },
-      { selector: 'node[type = "ip"]', style: { 'background-color': '#ef4444' } },
-      { selector: 'node[type = "user"]', style: { 'background-color': '#f59e0b' } },
-      { selector: 'node[type = "host"]', style: { 'background-color': '#16a34a' } },
-      { selector: 'node[type = "service"]', style: { 'background-color': '#7c3aed' } },
-      { selector: 'node[type = "process"]', style: { 'background-color': '#0ea5e9' } },
-      // Labels sit above the nodes on the white report canvas. Keep them dark
-      // even for the charcoal command nodes so the command text remains
-      // readable in both the interactive view and printed/PDF reports.
-      { selector: 'node[type = "command"]', style: { 'background-color': '#475569', 'color': '#111827' } },
-      { selector: 'node[role = "entry_point"]', style: { 'background-color': '#f97316', 'border-width': 4, 'border-color': '#c2410c', 'font-weight': 'bold' } },
-      { selector: 'node[role = "suspected_attacker"]', style: { 'background-color': '#dc2626', 'border-width': 4, 'border-color': '#991b1b', 'font-weight': 'bold' } },
-      { selector: 'node[role = "pivot_point"]', style: { 'background-color': '#7c3aed', 'border-width': 4, 'border-color': '#5b21b6', 'font-weight': 'bold' } },
-      { selector: 'node[role = "supporting"]', style: { 'border-width': 1, 'border-color': '#94a3b8' } }
+      { selector: 'node', style: { 'label': 'data(display)', 'font-size': 12, 'background-color': '#64748b', 'color': '#111827', 'text-valign': 'bottom', 'text-margin-y': 6, 'text-wrap': 'wrap', 'text-max-width': 160, 'text-background-color': '#fff', 'text-background-opacity': 0.9, 'text-background-padding': 2, 'width': 40, 'height': 40, 'border-width': 2, 'border-color': '#e2e8f0', 'transition-property': 'opacity', 'transition-duration': '0.35s' } },
+      { selector: 'edge', style: { 'label': 'data(label)', 'font-size': 10, 'text-margin-y': -8, 'color': '#334155', 'text-rotation': 'autorotate', 'text-background-color': '#fff', 'text-background-opacity': 0.9, 'text-background-padding': 1, 'width': 'mapData(count, 1, 10, 2, 6)', 'line-color': '#94a3b8', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#94a3b8', 'curve-style': 'bezier', 'transition-property': 'opacity, line-color', 'transition-duration': '0.35s' } },
+      { selector: 'node[type = "host"]', style: { 'background-color': '#16a34a', 'shape': 'round-rectangle', 'width': 44, 'height': 34 } },
+      { selector: 'node[type = "user"]', style: { 'background-color': '#d97706' } },
+      { selector: 'node[type = "ip"]', style: { 'background-color': '#dc2626', 'shape': 'diamond' } },
+      { selector: 'node[type = "service"]', style: { 'background-color': '#2563eb', 'shape': 'hexagon' } },
+      { selector: 'node[type = "process"]', style: { 'background-color': '#0891b2' } },
+      { selector: 'node[type = "command"]', style: { 'background-color': '#475569', 'shape': 'round-tag' } },
+      { selector: 'node[type = "registry"]', style: { 'background-color': '#9333ea', 'shape': 'barrel' } },
+      { selector: 'node[role = "entry_point"]', style: { 'border-width': 5, 'border-color': '#f97316' } },
+      { selector: 'node[role = "suspected_attacker"]', style: { 'border-width': 5, 'border-color': '#991b1b' } },
+      { selector: 'node[role = "pivot_point"]', style: { 'border-width': 5, 'border-color': '#111827', 'font-weight': 'bold' } },
+      { selector: '.future', style: { 'opacity': 0.08 } },
+      { selector: 'edge.current', style: { 'line-color': '#f97316', 'target-arrow-color': '#f97316', 'width': 5 } },
+      { selector: ':selected', style: { 'overlay-color': '#2563eb', 'overlay-opacity': 0.15 } },
     ],
-    layout: { name: 'cose', animate: false, padding: 20 }
+    maxZoom: 1.6,
+    // Interactions point from actors to what they touched, so a layered layout reads top-down.
+    layout: { name: 'preset' }
   });
-
+  const roots = cy.nodes().roots();
+  cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.9, padding: 40, avoidOverlap: true,
+              roots: roots.length ? roots : cy.nodes().max(node => node.degree()).ele }).run();
+  if (cy.zoom() > 1.1) { cy.zoom(1.1); cy.center(); }
+  // Replay order: when each interaction was first seen; undated ones last.
+  graphSteps = cy.edges().toArray().sort((a, b) => String(a.data('first_seen') || '~').localeCompare(String(b.data('first_seen') || '~')));
+  const slider = document.getElementById('graph-step');
+  slider.max = String(graphSteps.length);
+  slider.value = String(graphSteps.length);
   cy.on('tap', 'node', function(evt) {
     const data = evt.target.data();
-    pivot.textContent = JSON.stringify(data, null, 2);
-    if (['host', 'user', 'ip'].includes(data.type)) {
-      setFilter(data.type, data.value || data.label || '');
-    }
+    pivot.innerHTML = graphFacts(data.type_label || data.type, data.value || data.label, data);
+    if (['host', 'user', 'ip'].includes(data.type)) setFilter(data.type, data.value || data.label || '');
   });
-
   cy.on('tap', 'edge', function(evt) {
-    pivot.textContent = JSON.stringify(evt.target.data(), null, 2);
+    const data = evt.target.data();
+    const source = cy.getElementById(data.source).data(), target = cy.getElementById(data.target).data();
+    pivot.innerHTML = graphFacts(data.relation || data.type, `${source.label} → ${target.label}`, data);
   });
+}
+
+function graphFacts(kind, value, data) {
+  return `<dl class="graph-facts"><dt>${esc(kind)}</dt><dd>${esc(value)}</dd>
+    <dt>First seen</dt><dd>${esc(graphTime(data.first_seen))}</dd><dt>Last seen</dt><dd>${esc(graphTime(data.last_seen))}</dd>
+    <dt>Alerts</dt><dd>${esc(data.count || 0)}</dd>
+    ${(data.rules || []).length ? `<dt>Detections</dt><dd>${data.rules.map(esc).join('<br>')}</dd>` : ''}
+    ${data.role_label ? `<dt>Role</dt><dd>${esc(data.role_label)}</dd>` : ''}</dl>`;
+}
+
+function showGraphStep(step, highlight) {
+  if (!cy) return;
+  const shown = new Set();
+  cy.elements().removeClass('future current');
+  graphSteps.forEach((edge, index) => {
+    if (index < step) { shown.add(edge.data('source')); shown.add(edge.data('target')); }
+    else edge.addClass('future');
+  });
+  cy.nodes().forEach(node => { if (step < graphSteps.length && !shown.has(node.id())) node.addClass('future'); });
+  const label = document.getElementById('graph-step-label');
+  if (step >= graphSteps.length) { label.textContent = 'All interactions shown.'; return; }
+  if (step === 0) { label.textContent = 'Start: press Replay or drag to step through interactions in time order.'; return; }
+  const edge = graphSteps[step - 1];
+  if (highlight) edge.addClass('current');
+  const source = cy.getElementById(edge.data('source')).data('label'), target = cy.getElementById(edge.data('target')).data('label');
+  label.textContent = `${step}/${graphSteps.length} · ${graphTime(edge.data('first_seen'))} · ${source} → ${target}: ${edge.data('label')}`;
+}
+
+function toggleGraphReplay() {
+  const button = document.getElementById('graph-play');
+  const slider = document.getElementById('graph-step');
+  if (graphTimer) { clearInterval(graphTimer); graphTimer = null; button.textContent = '▶ Replay'; return; }
+  let step = Number(slider.value) >= graphSteps.length ? 0 : Number(slider.value);
+  button.textContent = 'Pause';
+  showGraphStep(step, true);
+  graphTimer = setInterval(() => {
+    step += 1;
+    slider.value = String(step);
+    showGraphStep(step, true);
+    if (step >= graphSteps.length) { clearInterval(graphTimer); graphTimer = null; button.textContent = '▶ Replay'; }
+  }, 1200);
 }
 
 function renderRawEvents() {

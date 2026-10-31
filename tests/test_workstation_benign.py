@@ -101,5 +101,37 @@ class DefenderPlatformServiceTests(unittest.TestCase):
                 self.assertIn("Suspicious Service Execution", _rules(alerts))
 
 
+class InstallerServiceClusterTests(unittest.TestCase):
+    """Real case: a VPN installer registered three services within nine minutes."""
+
+    def _incidents(self, images):
+        from correlation.attack_chain import correlate
+        from correlation.incident_builder import build_incidents
+        from triage_engine.adapters import alerts_to_signals_findings
+        from datetime import timedelta
+        events = [make_event(7045, timestamp=_TS + timedelta(minutes=4 * index), computer="workstation",
+                             channel="System", provider="Service Control Manager",
+                             event_data={"ServiceName": f"VendorSvc{index}", "ImagePath": image,
+                                         "ServiceAccount": "LocalSystem"})
+                  for index, image in enumerate(images)]
+        alerts = persistence.detect(events)
+        signals, findings, _ = alerts_to_signals_findings(alerts)
+        return findings, build_incidents(events, signals, findings, correlate(alerts))
+
+    def test_routine_service_installs_close_in_time_are_not_an_attack_chain(self):
+        findings, incidents = self._incidents([
+            r'"C:\Program Files\Vendor\VPN\v5.1.8\VendorService.exe"',
+            r'\??\C:\Program Files\Vendor\VPN\v5.1.8\Resources\Vendor.CalloutDriver.sys',
+            r'"C:\Program Files\Vendor\VPN\v5.1.8\Vendor.WireGuardService.exe"'])
+        self.assertEqual(findings, [])
+        self.assertEqual(incidents, [])
+
+    def test_suspicious_service_installs_still_form_an_incident(self):
+        findings, incidents = self._incidents([
+            r"C:\Users\Public\a.exe", r"cmd.exe /c C:\Users\Public\b.bat", r"powershell -enc AAAA"])
+        self.assertTrue(findings)
+        self.assertTrue(incidents)
+
+
 if __name__ == "__main__":
     unittest.main()

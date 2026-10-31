@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+import asyncio
+import collections
 import csv
 import hashlib
 import hmac
@@ -3544,6 +3546,27 @@ async def get_case_status(case_name: str, request: Request):
     return apply_demo_redaction_data(payload)
 
 
+_TIMELINE_CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
+
+
+def _sorted_timeline(path: str) -> tuple[dict, list]:
+    """Parsed timeline.json and its rows oldest-first, cached per file version (a real case is ~50 MB)."""
+    stat = os.stat(path)
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _TIMELINE_CACHE.get(path)
+    if cached and cached[0] == key:
+        _TIMELINE_CACHE.move_to_end(path)
+        return cached[1], cached[2]
+    with open(path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    rows = payload.get("timeline", []) if isinstance(payload.get("timeline"), list) else []
+    ordered = sorted(rows, key=lambda row: (row.get("timestamp") is None, str(row.get("timestamp") or "")))
+    _TIMELINE_CACHE[path] = (key, payload, ordered)
+    while len(_TIMELINE_CACHE) > 4:
+        _TIMELINE_CACHE.popitem(last=False)
+    return payload, ordered
+
+
 @app.get(
     "/api/cases/{case_name}/timeline",
     tags=["Cases"],
@@ -3551,8 +3574,10 @@ async def get_case_status(case_name: str, request: Request):
     description="Return case `timeline.json` event timeline artifact.",
     response_model=Dict[str, Any],
 )
-async def get_timeline(case_name: str, request: Request):
-    """Get timeline.json for a case."""
+async def get_timeline(case_name: str, request: Request, limit: Optional[int] = Query(None, ge=1, le=1000),
+                       offset: int = Query(0, ge=0), host: str = Query("", max_length=256),
+                       type: str = Query("", max_length=64), q: str = Query("", max_length=256)):
+    """Get timeline.json for a case; with ``limit``, one filtered page oldest-first."""
     user = _require_user(request, ("viewer", "analyst", "admin"))
     try:
         case_path = resolve_case_path(CASES_ROOT, case_name)
@@ -3561,10 +3586,23 @@ async def get_timeline(case_name: str, request: Request):
     path = os.path.join(case_path, "timeline.json")
     if not os.path.isfile(path):
         raise HTTPException(404, "timeline.json not found")
-    with open(path, "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
+    payload, ordered = await asyncio.to_thread(_sorted_timeline, path)
     _audit_case_access(user, case_name=os.path.basename(case_path), endpoint="/api/cases/{case_name}/timeline")
-    return apply_demo_redaction_data(payload)
+    if limit is None:
+        return apply_demo_redaction_data(payload)
+    query = q.strip().casefold()
+    fields = ("title", "summary", "user_display", "user", "command_line", "process", "id")
+    matching = [row for row in ordered
+                if (not host or (row.get("host_display") or row.get("host")) == host)
+                and (not type or row.get("type") == type)
+                and (not query or any(query in str(row.get(field) or "").casefold() for field in fields))]
+    return apply_demo_redaction_data({
+        "summary": payload.get("summary", {}), "total": len(ordered), "matching": len(matching),
+        "offset": offset, "limit": limit, "timeline": matching[offset:offset + limit],
+        "hosts": sorted({str(row.get("host_display") or row.get("host")) for row in ordered
+                         if row.get("host_display") or row.get("host")}),
+        "types": sorted({str(row.get("type")) for row in ordered if row.get("type")}),
+    })
 
 
 @app.get(

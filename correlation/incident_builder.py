@@ -216,6 +216,13 @@ def _from_attack_chains(chains: List[AttackChain], signals: List[Signal], findin
         )
         if not signal_ids and not finding_ids:
             continue
+        # Alerts that are merely close in time are not an attack chain. Without a
+        # promoted finding, require progression: two techniques across two tactics.
+        # (One installer registering three services formed a "high" incident on a
+        # real workstation from signals the promotion step had rejected.)
+        progression = len({alert.rule_name for alert in chain.alerts}) >= 2 and len(set(chain.tactics)) >= 2
+        if not finding_ids and not progression:
+            continue
 
         entities = _entities_from_alerts(chain.alerts)
         title, technique_summary = _chain_title_and_summary(chain)

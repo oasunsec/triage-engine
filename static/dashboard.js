@@ -267,7 +267,7 @@ function caseScopeHint(scope) {
   const parts = [];
   if (scope.host_count > 1) parts.push(`${scope.host_count} hosts`);
   if (scope.split_verdict) parts.push('mixed verdicts');
-  else if (scope.needs_scope_review && scope.span_days > 7) parts.push(`${Math.ceil(scope.span_days)} days`);
+  else if (scope.needs_scope_review && scope.span_days > 7) parts.push(`spans ${Math.ceil(scope.span_days)} days`);
   return ` <small class="scope-hint" title="Open the case to review per-host verdicts">${esc(parts.join(' · '))}</small>`;
 }
 
@@ -295,6 +295,12 @@ function notify(message, kind = 'info') {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 180);
   }, 3200);
+}
+
+function shortStamp(value) {
+  const date = new Date(value || '');
+  if (!value || Number.isNaN(date.getTime())) return 'unknown';
+  return date.toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 }
 
 function renderMiniList(items, emptyText) {
@@ -1685,21 +1691,20 @@ function renderJevReview(name) {
       <span class="detail-chip">Prompt review probability: ${confidencePercent(result.prompt_review_probability)}%</span>
       <span class="detail-chip">Model: ${esc(result.model || 'Jev')}</span>
     </div>` : '';
-  return `<div class="card card-soft" id="jev-review-card">
-    <div class="card-title">Jev analyst review</div>
-    <div class="section-kicker">Optional TypeSafe AI judgment. It does not change the deterministic disposition or case evidence.</div>
-    <div class="section-kicker" style="margin-top:8px">Sends priority, disposition, counts, telemetry gaps, and up to six incident and eight finding titles, summaries, severities, and MITRE techniques to TypeSafe AI. Raw EVTX and review notes are excluded.</div>
+  return `<details class="card details-card" id="jev-review-card"${result || _jevReviewBusy || _jevReviewError ? ' open' : ''}>
+    <summary>Optional AI second opinion (Jev)</summary>
+    <p class="scope-note">TypeSafe AI judgment. It never changes the deterministic disposition or the case evidence. It sends the priority, disposition, counts, telemetry gaps, and up to six incident and eight finding titles, summaries, severities and MITRE techniques. Raw EVTX and review notes are not sent.</p>
     ${resultContent}
-    <label class="section-kicker" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+    <label class="consent-row">
       <input id="jev-consent" type="checkbox" onchange="document.getElementById('jev-review-button').disabled = !this.checked || _jevReviewBusy">
       I agree to send this case summary to TypeSafe AI for this review.
     </label>
     <div class="auth-actions" style="margin-top:10px">
       <button class="btn btn-sm btn-primary" id="jev-review-button" onclick='runJevReview(${jsv(name)})' disabled>${_jevReviewBusy ? 'Reviewing…' : result ? 'Run again' : 'Run Jev review'}</button>
-      <span class="section-kicker">Requires TYPESAFE_API_KEY on the server.</span>
+      <span class="scope-note">Requires TYPESAFE_API_KEY on the server.</span>
     </div>
-    <div role="status" aria-live="polite" class="section-kicker" style="color:var(--red)">${esc(_jevReviewError)}</div>
-  </div>`;
+    <div role="status" aria-live="polite" class="scope-note" style="color:var(--red)">${esc(_jevReviewError)}</div>
+  </details>`;
 }
 
 async function runJevReview(name) {
@@ -1761,85 +1766,60 @@ function showDetailTabContent(tab, name, data) {
       review.withOwner ? `${review.withOwner} item(s) already have an owner.` : 'No items are assigned yet.',
       canReviewMutate() ? 'Use Findings and Incidents tabs to update review state directly in place.' : 'Viewer mode is read-only. Ask an analyst or admin to make review updates.',
     ].filter(Boolean);
-    el.innerHTML = `<div class="panel-stack">
+    const issues = [
+      ['Missing telemetry', cq.telemetry_missing], ['Partial reads', cq.partial_sources],
+      ['Permission denied', cq.permission_denied_sources], ['Fallback after denied access', cq.fallback_permission_sources],
+      ['Unreadable channels', cq.unavailable_sources],
+    ].filter(([, values]) => (values || []).length);
+    const next = td.recommended_next || [];
+    el.innerHTML = `<div class="panel-stack overview-stack">
       ${renderEvidenceScope(cs)}
-      <div class="case-status-banner">
-        <div class="banner-title">${esc(cs.case_name || name)} · ${esc(cs.response_priority || 'P4')}</div>
-        <div class="banner-copy">Signals: ${sm.signal_count || 0} · Findings: ${sm.finding_count || 0} · Incidents: ${sm.incident_count || 0}. ${esc(cq.summary || 'Collection quality metadata is available for this case.')}</div>
-        <div class="detail-chip-row">
-          <span class="detail-chip">Primary host: ${esc(cs.primary_host || 'unknown')}</span>
-          <span class="detail-chip">Primary user: ${esc(cs.primary_user || 'unknown')}</span>
-          <span class="detail-chip">Observed source: ${esc(cs.primary_source_ip || 'none')}</span>
+      <section class="card verdict-card">
+        <div class="verdict-head">
+          <div><div class="eyebrow">Triage disposition</div>
+            <div class="verdict-title">${esc(td.disposition || 'Not yet determined')}</div>
+            <div class="verdict-meta">${esc(cs.response_priority || 'P4')} · confidence ${esc(td.confidence || 'unknown')} (${confidencePercent(td.confidence_score)}%)</div></div>
+          ${td.reasons?.length ? `<div class="detail-chip-row">${td.reasons.map(x => `<span class="detail-chip">${esc(x)}</span>`).join('')}</div>` : ''}
         </div>
-      </div>
-      <div class="card card-soft" style="border-left:4px solid var(--accent)">
-        <div class="card-title">Triage Disposition</div>
-        <div style="font-size:22px;font-weight:700;color:var(--accent)">${esc(td.disposition || 'Not yet determined')}</div>
-        <div class="section-kicker">Deterministic confidence: ${esc(td.confidence || 'unknown')} (${confidencePercent(td.confidence_score)}%)</div>
-        ${td.reasons?.length ? `<div class="detail-chip-row">${td.reasons.map(x => `<span class="detail-chip">${esc(x)}</span>`).join('')}</div>` : ''}
-        ${td.telemetry_gaps?.length ? `<div style="color:var(--orange);margin-top:8px"><b>Telemetry gaps:</b> ${td.telemetry_gaps.map(esc).join(', ')}</div>` : ''}
-        ${td.recommended_next?.length ? `<div style="margin-top:8px"><b>Next:</b> ${td.recommended_next.map(esc).join('; ')}</div>` : ''}
-      </div>
+        ${next.length ? `<div class="verdict-next"><div class="section-kicker">Next steps</div><ol>${next.map(item => `<li>${esc(item)}</li>`).join('')}</ol></div>` : ''}
+        <dl class="fact-strip">
+          <div><dt>Host</dt><dd>${esc(cs.primary_host || 'unknown')}${(cs.hosts || []).length > 1 ? ` <span class="subtle">+${cs.hosts.length - 1} more</span>` : ''}</dd></div>
+          <div><dt>User</dt><dd>${esc(cs.primary_user || 'unknown')}</dd></div>
+          <div><dt>Source IP</dt><dd>${esc(cs.primary_source_ip || 'none')}</dd></div>
+          <div><dt>Activity</dt><dd>${esc(shortStamp(cs.first_seen))} → ${esc(shortStamp(cs.last_seen))}</dd></div>
+          <div><dt>Input</dt><dd>${esc(cs.input_source_display || displayInputSource(cs.input_source || ''))}</dd></div>
+        </dl>
+      </section>
       ${renderJevReview(name)}
-      <div class="detail-overview-grid">
-      <div class="card card-soft">
-        <div class="card-title">Case Overview</div>
-        <table class="detail-fact-table">
-          <tr><td>Input Source</td><td>${esc(cs.input_source_display || displayInputSource(cs.input_source || ''))}</td></tr>
-          <tr><td>Primary Host</td><td>${esc(cs.primary_host||'')}</td></tr>
-          <tr><td>Primary User</td><td>${esc(cs.primary_user||'')}</td></tr>
-          <tr><td>Primary Source IP</td><td>${esc(cs.primary_source_ip||'') || '-'}</td></tr>
-          <tr><td>Time Range</td><td>${esc(cs.first_seen||'')} &mdash; ${esc(cs.last_seen||'')}</td></tr>
-          <tr><td>Hosts</td><td>${(cs.hosts||[]).map(esc).join(', ')||'-'}</td></tr>
-          <tr><td>Users</td><td>${(cs.users||[]).slice(0,10).map(esc).join(', ')||'-'}</td></tr>
-        </table>
+      <div class="overview-columns">
+        <section class="card">
+          <div class="card-title">Collection quality</div>
+          <p class="section-kicker">${esc(cq.summary || 'Collection metadata available for this case.')}</p>
+          <dl class="fact-list">
+            <div><dt>Sources</dt><dd>${esc(cq.source_count ?? '-')}</dd></div>
+            <div><dt>Parsed events</dt><dd>${esc(Number(cq.parsed_event_count || 0).toLocaleString())}</dd></div>
+            <div><dt>Telemetry present</dt><dd>${(cq.telemetry_present || []).map(esc).join(', ') || 'None'}</dd></div>
+            <div><dt>Warnings</dt><dd>${esc(cq.warning_count ?? 0)}</dd></div>
+            ${issues.map(([label, values]) => `<div class="fact-issue"><dt>${esc(label)}</dt><dd>${values.map(esc).join(', ')}</dd></div>`).join('')}
+          </dl>
+          ${issues.length ? '' : '<p class="fact-ok">No read, permission or channel problems.</p>'}
+        </section>
+        <section class="card">
+          <div class="card-title">Review progress</div>
+          <div class="counter-row">
+            ${[['Open', review.open, '--blue'], ['In review', review.inReview, '--orange'], ['Escalated', review.escalated, '--red'], ['Owned', review.withOwner, '--green']]
+              .map(([label, value, color]) => `<div class="counter"><span style="color:var(${color})">${esc(value)}</span>${esc(label)}</div>`).join('')}
+          </div>
+          ${renderMiniList(workbench, 'No active workflow recommendations.')}
+          ${campaign.length ? `<div class="section-kicker">Campaign overlaps</div>${renderMiniList(campaign, '')}` : ''}
+          ${nextActions.length ? `<div class="section-kicker">Collection advice</div>${renderMiniList(nextActions, '')}` : ''}
+        </section>
       </div>
-      <div class="card card-soft">
-        <div class="card-title">Collection Quality</div>
-        <div class="section-kicker">${esc(cq.summary || 'Collection metadata available for this case.')}</div>
-        <table class="detail-fact-table">
-          <tr><td>Source Count</td><td>${cq.source_count ?? '-'}</td></tr>
-          <tr><td>Parsed Events</td><td>${cq.parsed_event_count ?? '-'}</td></tr>
-         <tr><td>Warnings</td><td>${cq.warning_count ?? 0}</td></tr>
-         <tr><td>Telemetry Present</td><td>${(cq.telemetry_present||[]).map(esc).join(', ')||'None'}</td></tr>
-          <tr><td>Telemetry Missing</td><td style="color:var(--orange)">${(cq.telemetry_missing||[]).map(esc).join(', ')||'None'}</td></tr>
-          <tr><td>Partial Reads</td><td style="color:var(--orange)">${(cq.partial_sources||[]).map(esc).join(', ')||'None'}</td></tr>
-          <tr><td>Permission Issues</td><td style="color:var(--red)">${(cq.permission_denied_sources||[]).map(esc).join(', ')||'None'}</td></tr>
-          <tr><td>Fallback After Denied Access</td><td style="color:var(--orange)">${(cq.fallback_permission_sources||[]).map(esc).join(', ')||'None'}</td></tr>
-          <tr><td>Unreadable Channels</td><td style="color:var(--red)">${(cq.unavailable_sources||[]).map(esc).join(', ')||'None'}</td></tr>
-       </table>
-     </div>
-      <div class="card card-soft">
-        <div class="card-title">Pipeline Timing</div>
-        <div class="section-kicker">Captured from run status metadata for this investigation.</div>
-        <table class="detail-fact-table">
-          ${stageTimingRows.map(([label, value]) => `<tr><td>${esc(label)}</td><td>${esc(formatTiming(value))}</td></tr>`).join('')}
-        </table>
-        <div class="section-kicker" style="margin-top:12px">Slowest detectors</div>
+      <details class="card details-card"><summary>Pipeline timing · ${esc(formatTiming(stageTimings.total_ms))} total</summary>
+        <dl class="fact-list">${stageTimingRows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(formatTiming(value))}</dd></div>`).join('')}</dl>
+        <div class="section-kicker">Slowest detectors</div>
         ${renderMiniList(detectorTimingList, 'No detector timing data available.')}
-      </div>
-      <div class="card card-soft">
-        <div class="card-title">Review Snapshot</div>
-        <div class="stats" style="margin-bottom:0">
-          ${stat(review.open, 'Open', '--blue')}
-          ${stat(review.inReview, 'In Review', '--orange')}
-          ${stat(review.escalated, 'Escalated', '--red')}
-          ${stat(review.withOwner, 'Owned', '--green')}
-        </div>
-      </div>
-      <div class="card card-soft">
-        <div class="card-title">Workflow Guide</div>
-        <div class="section-kicker">Where to focus next in this case</div>
-        ${renderMiniList(workbench, 'No active workflow recommendations.')}
-      </div>
-      <div class="card card-soft">
-        <div class="card-title">Analyst Context</div>
-        <div class="section-kicker">Campaign Summary</div>
-        ${renderMiniList(campaign, 'No multi-host campaign overlaps identified.')}
-        <div class="section-kicker" style="margin-top:16px">Recommended Next Actions</div>
-        ${renderMiniList(nextActions, 'No additional analyst actions recommended.')}
-      </div>
-      </div>
+      </details>
     </div>`;
   } else if (tab === 'incidents') {
     const incs = data.incidents || [];
@@ -1856,7 +1836,7 @@ function showDetailTabContent(tab, name, data) {
           <div class="detail-summary">${esc(inc.summary||'')}</div>
           <div class="detail-meta-line"><b>Why flagged:</b> ${esc(inc.why_flagged||'Correlated suspicious behavior')}</div>
           <div class="detail-chip-row">
-            <span class="detail-chip">MITRE: ${esc(inc.mitre_tactic||'-')} / ${esc(inc.mitre_technique||'-')}</span>
+            ${inc.mitre_tactic || inc.mitre_technique || inc.technique_summary ? `<span class="detail-chip">MITRE: ${esc([inc.mitre_tactic, inc.mitre_technique].filter(Boolean).join(' / ') || inc.technique_summary)}</span>` : ''}
             <span class="detail-chip">Severity: ${esc(inc.severity||'unknown')}</span>
             <span class="detail-chip">Confidence: ${inc.confidence_score||0}%</span>
           </div>
@@ -1935,13 +1915,14 @@ function renderReviewPanel(caseName, itemType, itemId, rv) {
   const dispositions = reviewEnums.dispositions || ['True Positive','False Positive','Benign Expected Activity','Suspicious - Needs More Investigation','Test / Lab Activity','Duplicate'];
   const ownerValue = rv.owner || getReviewerName();
   const reviewStatus = String(rv.status || 'Open');
-  const collapsedByDefault = reviewStatus === 'Closed' || reviewStatus === 'Suppressed';
+  // The evidence leads; the form opens on request or for an item opened from the queue or timeline.
+  const collapsedByDefault = _detailTarget.itemId !== itemId;
   const toggleLabel = collapsedByDefault ? 'Expand Review' : 'Collapse Review';
   const disabled = canReviewMutate() ? '' : ' disabled';
   const hint = canReviewMutate() ? '' : '<div style="font-size:11px;color:var(--text2);margin-bottom:8px">Viewer access: review edits are read-only.</div>';
   return `<div class="review-panel${collapsedByDefault ? ' is-collapsed' : ''}" id="${pfx}-panel" data-case-name="${esc(caseName)}" data-item-type="${esc(itemType)}" data-item-id="${esc(itemId)}">
     <div class="review-panel-header">
-      <div class="rp-title">Analyst Review</div>
+      <div class="rp-title">Analyst review <span class="rp-state">${esc(reviewStatus)} · ${esc(rv.owner || 'unassigned')}${rv.disposition ? ` · ${esc(rv.disposition)}` : ''}</span></div>
       <button class="btn btn-sm btn-ghost" id="${pfx}-toggle" onclick='toggleReviewPanel(${jsv(pfx)})'>${toggleLabel}</button>
     </div>
     <div class="review-panel-body" id="${pfx}-body"${collapsedByDefault ? ' style="display:none"' : ''}>
@@ -1981,7 +1962,7 @@ function renderReviewPanel(caseName, itemType, itemId, rv) {
     </div>
     <div style="margin-top:12px">
       <div class="history-toolbar">
-        <div class="rp-title" style="cursor:pointer" onclick='toggleHistory(${jsv(pfx)})'>History (click to toggle)</div>
+        <div class="rp-title" style="cursor:pointer" onclick='toggleHistory(${jsv(pfx)})'>History ▸</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-sm btn-ghost" onclick='downloadReviewHistoryExport("csv", ${jsv(caseName)}, ${jsv(itemType)}, ${jsv(itemId)})'>CSV</button>
           <button class="btn btn-sm btn-ghost" onclick='downloadReviewHistoryExport("json", ${jsv(caseName)}, ${jsv(itemType)}, ${jsv(itemId)})'>JSON</button>
@@ -2130,6 +2111,7 @@ function toggleReviewPanel(pfx) {
   const isHidden = body.style.display === 'none';
   body.style.display = isHidden ? '' : 'none';
   toggle.textContent = isHidden ? 'Collapse Review' : 'Expand Review';
+  document.getElementById(pfx + '-panel')?.classList.toggle('is-collapsed', !isHidden);
 }
 
 function toggleHistory(pfx) {

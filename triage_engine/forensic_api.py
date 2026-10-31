@@ -12,6 +12,7 @@ import json
 import os
 import re
 import uuid
+from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -44,12 +45,26 @@ class AnalystLinkCreate(BaseModel):
     claim: str = Field(..., min_length=1, max_length=2000)
 
 
+_JSON_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+
+
 def _read_json(path: str) -> Dict[str, Any]:
+    """Case JSON, cached per file version: paging a real case re-read 60 MB per request."""
     if not os.path.isfile(path):
         return {}
+    stat = os.stat(path)
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _JSON_CACHE.get(path)
+    if cached and cached[0] == key:
+        _JSON_CACHE.move_to_end(path)
+        return cached[1]
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
-    return payload if isinstance(payload, dict) else {}
+    payload = payload if isinstance(payload, dict) else {}
+    _JSON_CACHE[path] = (key, payload)
+    while len(_JSON_CACHE) > 6:
+        _JSON_CACHE.popitem(last=False)
+    return payload
 
 
 def _event_observation_exists(case_path: str, observation_id: str) -> bool:
@@ -102,7 +117,7 @@ def build_forensics_router(*, require_user: Callable, require_case: Callable, au
         executables = payload.get("executables", []) or []
         query = q.strip().casefold()
         rows = [item for item in executables
-                if (not reasons_only or item.get("reasons"))
+                if (not reasons_only or item.get("score", 0) > 0)
                 and (not reason or any(entry.get("code") == reason for entry in item.get("reasons", [])))
                 and (not query or query in str(item.get("path", "")).casefold())]
         audit_case_access(user, case_name=resolved, endpoint="/api/cases/{case_name}/executable-inventory")

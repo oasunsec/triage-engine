@@ -6,6 +6,9 @@ let forensicCase = '';
 let forensicLinks = null;
 let forensicObservations = [];
 let forensicInventory = null;
+let forensicObservationTotal = 0;
+let observationSearchTimer = null;
+const OBSERVATION_PAGE = 50;
 let forensicRequestId = 0;
 
 const LINK_CLASS_LABELS = {
@@ -30,12 +33,13 @@ async function loadForensicEvidence(name) {
     const base = `/api/cases/${encodeURIComponent(name)}`;
     const [links, observations, inventory] = await Promise.all([
       apiJSON(`${base}/evidence-links?limit=500`),
-      apiJSON(`${base}/forensic-observations?limit=500`),
+      apiJSON(`${base}/forensic-observations?limit=${OBSERVATION_PAGE}`),
       apiJSON(`${base}/executable-inventory?limit=200`).catch(() => ({available: false})),
     ]);
     if (!stillCurrent()) return;
     forensicLinks = links;
     forensicObservations = observations.observations || [];
+    forensicObservationTotal = observations.total || 0;
     forensicInventory = inventory;
     panel.innerHTML = `<div class="panel-stack">
       ${renderForensicCoverage(links.summary || {}, observations)}
@@ -51,10 +55,10 @@ async function loadForensicEvidence(name) {
       <section class="card"><div class="section-heading"><div><div class="eyebrow">EVIDENCE EXPLORER</div><h2>Artifact observations</h2></div>
         <span class="subtle-hint">Recorded time keeps its source meaning</span></div>
         <div class="table-toolbar"><div class="toolbar-group">
-          <div class="input-group"><label for="forensic-search">Search</label><input class="input" id="forensic-search" placeholder="Name, path, URL, host, record…" oninput="renderForensicObservations()"></div>
-          <div class="input-group"><label for="forensic-kind">Artifact type</label><select class="input" id="forensic-kind" onchange="renderForensicObservations()"><option value="">All types</option>${(observations.kinds || []).map(kind => `<option value="${esc(kind)}">${esc(kind)}</option>`).join('')}</select></div>
+          <div class="input-group"><label for="forensic-search">Search</label><input class="input" id="forensic-search" placeholder="Name, path, URL, host, record…" oninput="scheduleObservationSearch()"></div>
+          <div class="input-group"><label for="forensic-kind">Artifact type</label><select class="input" id="forensic-kind" onchange="reloadForensicObservations()"><option value="">All types</option>${(observations.kinds || []).map(kind => `<option value="${esc(kind)}">${esc(kind)}</option>`).join('')}</select></div>
         </div></div>
-        <p id="forensic-meta" class="scope-note" role="status"></p><div id="forensic-observations"></div></section>
+        <p id="forensic-meta" class="scope-note" role="status"></p><div id="forensic-observations"></div><div id="forensic-more"></div></section>
     </div>`;
     renderForensicLinks();
     renderForensicHypotheses();
@@ -104,16 +108,26 @@ function renderInventoryRows() {
   document.getElementById('inventory-rows').innerHTML = inventoryRows(rows, forensicInventory?.reasons || {});
 }
 
+function coverageNotes(info) {
+  // Three short facts inline; counters and nested breakdowns stay one click away.
+  const entries = Object.entries(info).filter(([key]) => !['status', 'count', 'run_observations'].includes(key));
+  if (!entries.length) return '';
+  const show = value => typeof value === 'object' ? JSON.stringify(value) : String(value);
+  const brief = entries.filter(([, value]) => typeof value !== 'object').slice(0, 3)
+    .map(([key, value]) => `${esc(key.replace(/_/g, ' '))}: ${esc(typeof value === 'number' ? value.toLocaleString() : show(value))}`).join(' · ');
+  return `${brief}${entries.length > 3 || entries.some(([, value]) => typeof value === 'object') ? `<details class="coverage-more"><summary>All details</summary><ul>${entries.map(([key, value]) => `<li>${esc(key.replace(/_/g, ' '))}: ${esc(show(value))}</li>`).join('')}</ul></details>` : ''}`;
+}
+
 function renderForensicCoverage(summary, observations) {
   const families = (summary.coverage || {}).families || {};
-  const rows = Object.entries(families).map(([family, info]) => `<tr><td>${esc(family.replace(/_/g, ' '))}</td><td>${esc(info.status)}</td><td>${esc(info.count ?? info.run_observations ?? 0)}</td><td>${esc(Object.entries(info).filter(([key]) => !['status', 'count', 'run_observations'].includes(key)).map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`).join('; '))}</td></tr>`).join('');
+  const rows = Object.entries(families).map(([family, info]) => `<tr><td>${esc(family.replace(/_/g, ' '))}</td><td>${esc(String(info.status || '').replace(/_/g, ' '))}</td><td>${esc(Number(info.count ?? info.run_observations ?? 0).toLocaleString())}</td><td>${coverageNotes(info)}</td></tr>`).join('');
   const limits = (summary.coverage || {}).limitations || [];
   const obsSummary = observations.summary || {};
   return `<section class="card card-soft"><div class="card-title">Source Coverage</div>
     <div class="section-kicker">${esc(obsSummary.observation_count ?? 0)} artifact observation(s) from ${esc(obsSummary.host || 'no artifact bundle')}; processing ${esc(obsSummary.completeness || 'not applicable')}. ${summary.evaluated ? `${esc(summary.relationship_count)} link(s), ${esc(summary.cross_source_finding_count)} cross-source finding(s).` : 'Links are evaluated only when event records and artifacts are both supplied.'}</div>
     ${rows ? `<table class="detail-fact-table"><tr><th>Evidence family</th><th>Status</th><th>Records</th><th>Notes</th></tr>${rows}</table>` : ''}
     ${limits.length ? `<ul class="scope-note">${limits.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
-    ${(obsSummary.warnings || []).length ? `<p style="color:var(--orange)"><b>Collection warnings:</b> ${obsSummary.warnings.map(esc).join(' ')}</p>` : ''}</section>`;
+    ${(obsSummary.warnings || []).length ? `<div class="coverage-warnings"><b>Collection warnings</b><ul>${obsSummary.warnings.map(item => `<li>${esc(item)}</li>`).join('')}</ul></div>` : ''}</section>`;
 }
 
 function decisionControls(kind, id, review) {
@@ -166,20 +180,40 @@ function renderHypothesisForm() {
     <button class="btn btn-sm" onclick="addForensicHypothesis()">Add hypothesis</button></div>`;
 }
 
+async function fetchObservationPage(offset) {
+  const params = new URLSearchParams({limit: String(OBSERVATION_PAGE), offset: String(offset),
+    q: (document.getElementById('forensic-search')?.value || '').trim(), kind: document.getElementById('forensic-kind')?.value || ''});
+  return apiJSON(`/api/cases/${encodeURIComponent(forensicCase)}/forensic-observations?${params}`);
+}
+
+function scheduleObservationSearch() {
+  clearTimeout(observationSearchTimer);
+  observationSearchTimer = setTimeout(reloadForensicObservations, 300);
+}
+
+async function reloadForensicObservations(append = false) {
+  const requestId = forensicRequestId;
+  const page = await fetchObservationPage(append ? forensicObservations.length : 0);
+  if (requestId !== forensicRequestId) return;
+  forensicObservations = append ? forensicObservations.concat(page.observations || []) : (page.observations || []);
+  forensicObservationTotal = page.total || 0;
+  renderForensicObservations();
+}
+
 function renderForensicObservations() {
-  const query = (document.getElementById('forensic-search').value || '').trim().toLowerCase();
-  const kind = document.getElementById('forensic-kind').value;
-  const rows = forensicObservations.filter(item => (!kind || item.kind === kind) && (!query || JSON.stringify(item).toLowerCase().includes(query)));
-  document.getElementById('forensic-meta').textContent = `Showing ${rows.length} of ${forensicObservations.length} loaded observation(s). Original records stay in the retained source files.`;
+  const rows = forensicObservations;
+  const remaining = forensicObservationTotal - rows.length;
+  document.getElementById('forensic-meta').textContent = `Showing ${rows.length} of ${forensicObservationTotal} matching observation(s). Original records stay in the retained source files.`;
   document.getElementById('forensic-observations').innerHTML = rows.length ? rows.map(item => {
     const details = item.details || {};
-    const name = details.name || details.target_path || details.current_path || '';
+    const name = details.name || details.target_path || details.current_path || details.path || '';
     return `<details class="timeline-entry"><summary><time>${esc(item.timestamp || item.observed_at || 'unrecorded')}</time><span><strong>${esc(name || item.kind)}</strong><small>${esc(item.kind)} · ${esc(item.time_semantics)} · ${esc(item.host)}${(item.relationship_ids || []).length ? ` · ${esc(item.relationship_ids.length)} link(s)` : ''}</small></span></summary>
       <div class="timeline-evidence"><p>${esc(item.interpretation || '')}</p>
       <p><b>Source:</b> ${esc(item.source_file)} record ${esc(item.source_record)} · sha256 ${esc(item.source_sha256)}<br><b>Observation:</b> <code>${esc(item.id)}</code> · collected ${esc(item.observed_at)}</p>
       ${details.command ? `<pre>${esc(details.command)}</pre>` : ''}
       <details><summary>Full observation</summary><pre>${esc(JSON.stringify(item, null, 2))}</pre></details></div></details>`;
   }).join('') : '<div class="empty-state">No observations match these filters.</div>';
+  document.getElementById('forensic-more').innerHTML = remaining > 0 ? `<button class="btn btn-ghost" onclick="reloadForensicObservations(true)">Show ${Math.min(OBSERVATION_PAGE, remaining)} more</button>` : '';
 }
 
 async function saveLinkDecision(kind, id) {

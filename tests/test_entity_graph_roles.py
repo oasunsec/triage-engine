@@ -52,3 +52,23 @@ def test_hostname_source_is_not_labeled_as_suspected_attacker():
     ip_node = next(node["data"] for node in graph["nodes"] if node["data"]["type"] == "ip")
     assert ip_node["role"] == "entry_point"
     assert ip_node["role_label"] == "Observed entry point"
+
+
+def test_service_install_commands_are_connected_and_edges_carry_time_and_rules():
+    # Public sample LM_Remote_Service02_7045: cmd.exe and calc.exe floated unconnected.
+    from datetime import datetime, timezone
+    first = datetime(2019, 3, 3, 9, 20, 28, tzinfo=timezone.utc)
+    later = datetime(2019, 3, 3, 9, 24, 24, tzinfo=timezone.utc)
+    items = [_item("fnd-1", process="", user="", source_ip="", service="spoolfool", command_line="cmd.exe /c calc.exe",
+                   title="Service Installed", first_seen=first, last_seen=first),
+             _item("fnd-2", process="", user="", source_ip="", service="spoolfool", command_line="cmd.exe /c calc.exe",
+                   title="Suspicious Service Execution", first_seen=later, last_seen=later)]
+    graph = build_entity_graph([], items, [])
+    connected = {edge["data"][end] for edge in graph["edges"] for end in ("source", "target")}
+    assert {node["data"]["id"] for node in graph["nodes"]} <= connected
+    edge = next(edge["data"] for edge in graph["edges"] if edge["data"]["type"] == "SERVICE_TO_COMMAND")
+    assert edge["count"] == 2 and edge["first_seen"] == first.isoformat() and edge["last_seen"] == later.isoformat()
+    assert edge["rules"] == ["Service Installed", "Suspicious Service Execution"]
+    assert edge["label"] == "Service Installed ×2" and edge["relation"] == "service command line"
+    service = next(node["data"] for node in graph["nodes"] if node["data"]["type"] == "service")
+    assert service["type_label"] == "Service" and service["first_seen"] == first.isoformat()

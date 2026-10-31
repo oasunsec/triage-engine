@@ -215,6 +215,10 @@ function renderEvidenceScope(caseInfo) {
   return `<aside class="scope-warning" aria-label="Evidence scope"><strong>Verify the evidence scope</strong><p>${notes.join(' ')} Confirm that the hosts and collection dates belong to the same investigation before treating correlated activity as one incident.</p></aside>`;
 }
 
+const TIMELINE_PAGE = 200;
+let timelineMeta = {matching: 0, total: 0};
+let timelineSearchTimer = null;
+
 async function loadEvidenceTimeline(name) {
   const requestId = ++timelineRequestId;
   const parentRequest = caseRequestId;
@@ -224,26 +228,55 @@ async function loadEvidenceTimeline(name) {
   panel.innerHTML = '<div class="card"><div class="loading-state" role="status">Loading evidence timeline…</div></div>';
   const stillCurrent = () => requestId === timelineRequestId && parentRequest === caseRequestId && currentPage === 'case-detail' && _detailTarget.tab === 'timeline';
   try {
-    const payload = await apiJSON(`/api/cases/${encodeURIComponent(name)}/timeline`);
+    const payload = await fetchTimelinePage(name, 0);
     if (!stillCurrent()) return;
-    timelineRows = (Array.isArray(payload.timeline) ? payload.timeline : []).slice().sort((a,b)=>safeDate(a.timestamp)-safeDate(b.timestamp));
-    const hosts = [...new Set(timelineRows.map(row=>row.host_display || row.host).filter(Boolean))].sort();
-    panel.innerHTML = `<section class="card"><div class="section-heading"><div><div class="eyebrow">EVIDENCE EXPLORER</div><h2>Investigation timeline</h2></div><span class="subtle-hint">Oldest first · source timestamps</span></div><div class="table-toolbar"><div class="toolbar-group"><div class="input-group"><label for="timeline-search">Search evidence</label><input class="input" id="timeline-search" placeholder="Title, user, command, or summary…" oninput="renderEvidenceTimeline()"></div><div class="input-group"><label for="timeline-host">Host</label><select class="input" id="timeline-host" onchange="renderEvidenceTimeline()"><option value="">All hosts</option>${hosts.map(host=>`<option value="${esc(host)}">${esc(host)}</option>`).join('')}</select></div><div class="input-group"><label for="timeline-type">Evidence type</label><select class="input" id="timeline-type" onchange="renderEvidenceTimeline()"><option value="">All types</option>${[...new Set(timelineRows.map(row=>row.type).filter(Boolean))].sort().map(type=>`<option value="${esc(type)}">${esc(type)}</option>`).join('')}</select></div></div></div><p id="timeline-meta" class="scope-note" role="status"></p><div class="evidence-timeline" id="timeline-rows"></div></section>`;
-    renderEvidenceTimeline();
+    panel.innerHTML = `<section class="card"><div class="section-heading"><div><div class="eyebrow">Evidence explorer</div><h2>Investigation timeline</h2></div><span class="subtle-hint">Oldest first · source timestamps</span></div><div class="table-toolbar"><div class="toolbar-group"><div class="input-group"><label for="timeline-search">Search evidence</label><input class="input" id="timeline-search" placeholder="Title, user, command, or summary…" oninput="scheduleTimelineSearch()"></div><div class="input-group"><label for="timeline-host">Host</label><select class="input" id="timeline-host" onchange="reloadEvidenceTimeline()"><option value="">All hosts</option>${(payload.hosts || []).map(host=>`<option value="${esc(host)}">${esc(host)}</option>`).join('')}</select></div><div class="input-group"><label for="timeline-type">Evidence type</label><select class="input" id="timeline-type" onchange="reloadEvidenceTimeline()"><option value="">All types</option>${(payload.types || []).map(type=>`<option value="${esc(type)}">${esc(type)}</option>`).join('')}</select></div></div></div><p id="timeline-meta" class="scope-note" role="status"></p><div class="evidence-timeline" id="timeline-rows"></div><div id="timeline-more"></div></section>`;
+    acceptTimelinePage(payload, false);
   } catch (error) {
     if (!stillCurrent()) return;
     panel.innerHTML = `<div class="card"><div class="empty-state">Could not load timeline evidence.</div><button class="btn btn-ghost" onclick='loadEvidenceTimeline(${jsv(name)})'>Retry timeline</button></div>`;
   }
 }
 
+function timelineFilters() {
+  return {q: document.getElementById('timeline-search')?.value.trim() || '', host: document.getElementById('timeline-host')?.value || '',
+          type: document.getElementById('timeline-type')?.value || ''};
+}
+
+async function fetchTimelinePage(name, offset) {
+  const params = new URLSearchParams({limit: String(TIMELINE_PAGE), offset: String(offset), ...timelineFilters()});
+  return apiJSON(`/api/cases/${encodeURIComponent(name)}/timeline?${params}`);
+}
+
+function scheduleTimelineSearch() {
+  clearTimeout(timelineSearchTimer);
+  timelineSearchTimer = setTimeout(reloadEvidenceTimeline, 250);
+}
+
+async function reloadEvidenceTimeline() {
+  const requestId = ++timelineRequestId;
+  const payload = await fetchTimelinePage(timelineCase, 0);
+  if (requestId === timelineRequestId) acceptTimelinePage(payload, false);
+}
+
+async function loadMoreTimeline() {
+  const requestId = timelineRequestId;
+  const payload = await fetchTimelinePage(timelineCase, timelineRows.length);
+  if (requestId === timelineRequestId) acceptTimelinePage(payload, true);
+}
+
+function acceptTimelinePage(payload, append) {
+  const rows = Array.isArray(payload.timeline) ? payload.timeline : [];
+  timelineRows = append ? timelineRows.concat(rows) : rows;
+  timelineMeta = {matching: payload.matching || 0, total: payload.total || 0};
+  renderEvidenceTimeline();
+}
+
 function renderEvidenceTimeline() {
-  const query = document.getElementById('timeline-search').value.trim().toLowerCase();
-  const host = document.getElementById('timeline-host').value;
-  const type = document.getElementById('timeline-type').value;
-  const rows = timelineRows.filter(row => (!host || (row.host_display || row.host) === host) && (!type || row.type === type) && (!query || [row.title,row.summary,row.user_display,row.user,row.command_line,row.process,row.id].some(value=>String(value || '').toLowerCase().includes(query))));
-  const preview = rows.slice(0,500);
-  document.getElementById('timeline-meta').textContent = `Showing ${preview.length} of ${rows.length} matching entries · ${timelineRows.length} total. ${rows.length>500 ? 'Filter by host, type, or search to narrow the preview.' : 'Expand an entry to inspect its evidence.'}`;
-  document.getElementById('timeline-rows').innerHTML = preview.length ? preview.map(row=>`<details class="timeline-entry"><summary><time>${esc(row.timestamp || 'Timestamp unavailable')}</time><span><strong>${esc(row.title || row.display_label || row.type || 'Evidence')}</strong><small>${esc(row.host_display || row.host || 'Unknown host')} · ${esc(row.type || 'event')}</small></span><span class="badge">${esc(row.severity || '')}</span></summary><div class="timeline-evidence"><p>${esc(row.summary || 'No summary supplied.')}</p>${row.command_line ? `<pre>${esc(row.command_line)}</pre>` : ''}<p><strong>User:</strong> ${esc(row.user_display || row.user || 'Unknown')}</p>${row.recommended_next ? `<p><strong>Next step:</strong> ${esc(row.recommended_next)}</p>` : ''}${['finding','incident'].includes(row.type) && row.id ? `<button class="btn btn-sm btn-ghost" onclick='openReviewItem(${jsv(timelineCase)},${jsv(row.type)},${jsv(row.id)})'>Open ${esc(row.type)} review ↗</button>` : ''}</div></details>`).join('') : '<div class="empty-state">No timeline entries match these filters.</div>';
+  const remaining = timelineMeta.matching - timelineRows.length;
+  document.getElementById('timeline-meta').textContent = `Showing ${timelineRows.length} of ${timelineMeta.matching} matching entries · ${timelineMeta.total} total. Expand an entry to inspect its evidence.`;
+  document.getElementById('timeline-rows').innerHTML = timelineRows.length ? timelineRows.map(row=>`<details class="timeline-entry"><summary><time>${esc(row.timestamp || 'Timestamp unavailable')}</time><span><strong>${esc(row.title || row.display_label || row.type || 'Evidence')}</strong><small>${esc(row.host_display || row.host || 'Unknown host')} · ${esc(row.type || 'event')}</small></span><span class="badge">${esc(row.severity || '')}</span></summary><div class="timeline-evidence"><p>${esc(row.summary || 'No summary supplied.')}</p>${row.command_line ? `<pre>${esc(row.command_line)}</pre>` : ''}<p><strong>User:</strong> ${esc(row.user_display || row.user || 'Unknown')}</p>${row.recommended_next ? `<p><strong>Next step:</strong> ${esc(row.recommended_next)}</p>` : ''}${['finding','incident'].includes(row.type) && row.id ? `<button class="btn btn-sm btn-ghost" onclick='openReviewItem(${jsv(timelineCase)},${jsv(row.type)},${jsv(row.id)})'>Open ${esc(row.type)} review ↗</button>` : ''}</div></details>`).join('') : '<div class="empty-state">No timeline entries match these filters.</div>';
+  document.getElementById('timeline-more').innerHTML = remaining > 0 ? `<button class="btn btn-ghost" onclick="loadMoreTimeline()">Show ${Math.min(TIMELINE_PAGE, remaining)} more</button>` : '';
 }
 
 init();

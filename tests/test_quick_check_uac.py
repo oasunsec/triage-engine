@@ -34,10 +34,10 @@ def test_quick_check_uses_persisted_triage_disposition_fields_first():
     assert "data.triage_disposition || data.summary?.triage_disposition" in dashboard
     assert ".map(esc).join(', ')" in dashboard
     assert "confidencePercent(disposition.confidence_score)" in dashboard
-    assert "Permission Issues" in dashboard
-    assert "Unreadable Channels" in dashboard
-    assert "Partial Reads" in dashboard
-    assert "Fallback After Denied Access" in dashboard
+    assert "['Permission denied', cq.permission_denied_sources]" in dashboard
+    assert "['Unreadable channels', cq.unavailable_sources]" in dashboard
+    assert "['Partial reads', cq.partial_sources]" in dashboard
+    assert "['Fallback after denied access', cq.fallback_permission_sources]" in dashboard
     assert "cq.partial_sources" in dashboard
     assert "cq.fallback_permission_sources" in dashboard
 

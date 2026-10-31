@@ -87,7 +87,7 @@ class ForensicAPITests(unittest.TestCase):
         self.assertIn("\\users\\public\\upd.exe", [item["path"] for item in body["executables"]])
         self.assertIn("executed_but_absent", body["reasons"])
         flagged = self.viewer.get("/api/cases/mixed-case/executable-inventory").json()
-        self.assertTrue(all(item["reasons"] for item in flagged["executables"]))
+        self.assertTrue(all(item["score"] > 0 and item["reasons"] for item in flagged["executables"]))
         self.assertEqual(self._client().get("/api/cases/mixed-case/executable-inventory").status_code, 401)
 
     def test_unauthenticated_and_viewer_cannot_mutate(self):
