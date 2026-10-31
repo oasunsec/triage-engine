@@ -91,22 +91,11 @@ async function init() {
     openQuickCheck();
     await startQuickCheck();
   }
-  loadClientProfiles();
   setInterval(() => {
     if (!authState.authenticated || document.hidden || document.querySelector('.modal-shell:not(.hidden),.auth-overlay:not(.hidden)')) return;
     if(currentPage==='dashboard') loadCases(true);
     if(currentPage==='jobs') loadJobs(true);
   }, 5000);
-}
-
-async function loadClientProfiles() {
-  const select = document.getElementById('inv-client-id');
-  if (!select || !authState.authenticated) return;
-  try {
-    const clients = await apiJSON('/api/clients?active_only=true', {}, true);
-    if (!Array.isArray(clients) || !clients.length) return;
-    select.innerHTML = clients.map(c => `<option value="${esc(c.client_id)}">${esc(c.display_name)}${c.client_id==='default'?' (default)':''}</option>`).join('');
-  } catch (_) { /* compatible with older backend */ }
 }
 
 function setRuntimeBadge(runtime) {
@@ -227,7 +216,7 @@ function updateCasesView() {
   persistTablePreferences();
   let cases = [..._casesCache];
   if (search) {
-    cases = cases.filter(c => [c.name,c.client_id,c.input_source].some(value => String(value || '').toLowerCase().includes(search)));
+    cases = cases.filter(c => [c.name,c.input_source].some(value => String(value || '').toLowerCase().includes(search)));
   }
   const status = document.getElementById('cases-status')?.value || '';
   if (status) cases = cases.filter(c => c.status === status);
@@ -2332,7 +2321,6 @@ function handleFiles(fileList) {
 
 async function startInvestigation() {
   const caseName = document.getElementById('inv-case-name').value.trim();
-  const clientId = document.getElementById('inv-client-id')?.value || 'default';
   const sigma = document.getElementById('inv-sigma').checked;
   const statusEl = document.getElementById('inv-status');
   const btn = document.getElementById('btn-start');
@@ -2346,7 +2334,6 @@ async function startInvestigation() {
     const params = new URLSearchParams();
     if (caseName) params.set('case_name', caseName);
     if (sigma) params.set('enable_sigma', 'true');
-    params.set('client_id', clientId);
     params.set('acquisition_method', 'upload');
     try {
       const res = await apiJSON('/api/investigate?' + params.toString(), { method: 'POST', body: form });
@@ -2366,7 +2353,6 @@ async function startInvestigation() {
     const params = new URLSearchParams({evtx_path: evtxPath});
     if (caseName) params.set('case_name', caseName);
     if (sigma) params.set('enable_sigma', 'true');
-    params.set('client_id', clientId);
     params.set('acquisition_method', 'portable_collector');
     try {
       const res = await apiJSON('/api/investigate/path?' + params.toString(), { method: 'POST' });
@@ -2393,7 +2379,6 @@ async function startInvestigation() {
           enable_sigma: sigma,
           since_minutes: sinceMinutes,
           channels,
-          client_id: clientId,
           acquisition_method: 'local_live',
         }),
       });

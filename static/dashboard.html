@@ -65,7 +65,7 @@
             <div class="toolbar-group">
               <div class="input-group">
                 <label for="cases-search">Search</label>
-                <input class="input" id="cases-search" placeholder="Search name, client, or source…" oninput="tableState.cases.page=1;updateCasesView()">
+                <input class="input" id="cases-search" placeholder="Search name or source…" oninput="tableState.cases.page=1;updateCasesView()">
               </div>
               <div class="input-group">
                 <label for="cases-status">Status</label><select class="input" id="cases-status" onchange="tableState.cases.page=1;updateCasesView()"><option value="">All statuses</option><option value="completed">Completed</option><option value="running">Running</option><option value="failed">Failed</option></select>
@@ -244,11 +244,6 @@
           <div class="input-group">
             <label for="inv-case-name">Case Name (optional)</label>
             <input class="input" id="inv-case-name" placeholder="auto-generated if empty">
-          </div>
-          <div class="input-group">
-            <label for="inv-client-id">Client Profile</label>
-            <select class="input" id="inv-client-id"><option value="default">Default Client</option></select>
-            <div class="subtle-hint">Attribute this investigation to an MSP customer for retention and reporting.</div>
           </div>
           <div class="input-group">
             <label>EVTX Source</label>

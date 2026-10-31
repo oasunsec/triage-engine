@@ -1,4 +1,4 @@
-"""Low-cost MSP workflow primitives.
+"""Case metadata, deterministic dispositions and portable case bundles.
 
 This module deliberately keeps customer metadata and workflow state separate
 from immutable investigation artifacts.  It is usable by the CLI, API, and
@@ -42,24 +42,6 @@ def _data_dir() -> str:
         local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
         return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
     return os.path.abspath(configured or os.path.join(root, "data"))
-
-
-@dataclass
-class ClientProfile:
-    client_id: str
-    display_name: str
-    report_name: str = ""
-    contact: str = ""
-    logo: str = ""
-    accent_color: str = "#2563eb"
-    retention_days: int = 90
-    active: bool = True
-    schema_version: str = SCHEMA_VERSION
-    created_at: str = field(default_factory=utc_now)
-    updated_at: str = field(default_factory=utc_now)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass
@@ -126,13 +108,20 @@ class TriageDisposition:
 @dataclass
 class ExportManifest:
     case_name: str
-    client_id: str
     created_at: str
     files: List[Dict[str, Any]]
     schema_version: str = SCHEMA_VERSION
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+def case_retention_days() -> int:
+    """Default retention for new cases, from TRIAGE_CASE_RETENTION_DAYS (1-3650, default 90)."""
+    try:
+        return max(1, min(3650, int(os.environ.get("TRIAGE_CASE_RETENTION_DAYS", "90"))))
+    except ValueError:
+        return 90
 
 
 def derive_disposition(*, incident_count: int, finding_count: int, response_priority: str,
@@ -157,7 +146,9 @@ def derive_disposition(*, incident_count: int, finding_count: int, response_prio
                              max(0, min(100, int(confidence_score or 0))), why, gaps, next_steps)
 
 
-class ClientStore:
+class CaseMetadataStore:
+    """Case acquisition metadata and retention (product.db)."""
+
     def __init__(self, data_dir: Optional[str] = None):
         self.data_dir = os.path.abspath(data_dir or _data_dir())
         self.db_path = os.path.join(self.data_dir, "product.db")
@@ -191,49 +182,12 @@ class ClientStore:
             """)
         with self._conn() as con:
             run_migrations(con, (("001_product", initial),), namespace="product")
-            row = con.execute("SELECT client_id FROM client_profiles WHERE client_id='default'").fetchone()
-            if not row:
-                now = utc_now()
-                con.execute("INSERT INTO client_profiles(client_id,display_name,report_name,created_at,updated_at) VALUES(?,?,?,?,?)",
-                            ("default", "Default Client", "Triage Engine Investigation", now, now))
-
-    def upsert_client(self, profile: ClientProfile) -> ClientProfile:
-        if not re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", profile.client_id):
-            raise ValueError("client_id must be 1-64 alphanumeric characters, dash, or underscore")
-        profile.retention_days = max(1, min(3650, int(profile.retention_days)))
-        profile.updated_at = utc_now()
-        with self._conn() as con:
-            con.execute("""INSERT INTO client_profiles VALUES(?,?,?,?,?,?,?,?,?,?)
-              ON CONFLICT(client_id) DO UPDATE SET display_name=excluded.display_name,report_name=excluded.report_name,
-              contact=excluded.contact,logo=excluded.logo,accent_color=excluded.accent_color,retention_days=excluded.retention_days,
-              active=excluded.active,updated_at=excluded.updated_at""",
-              (profile.client_id, profile.display_name, profile.report_name, profile.contact, profile.logo,
-               profile.accent_color, profile.retention_days, int(profile.active), profile.created_at, profile.updated_at))
-        return profile
-
-    def get_client(self, client_id: str) -> Optional[ClientProfile]:
-        with self._conn() as con:
-            row = con.execute("SELECT * FROM client_profiles WHERE client_id=?", (client_id,)).fetchone()
-        if not row: return None
-        return ClientProfile(**{**dict(row), "active": bool(row["active"])})
-
-    def list_clients(self, active_only: bool = False) -> List[ClientProfile]:
-        q = "SELECT * FROM client_profiles" + (" WHERE active=1" if active_only else "") + " ORDER BY display_name"
-        with self._conn() as con: rows = con.execute(q).fetchall()
-        return [ClientProfile(**{**dict(r), "active": bool(r["active"])}) for r in rows]
-
-    def delete_client(self, client_id: str) -> bool:
-        if client_id == "default": return False
-        with self._conn() as con:
-            cur = con.execute("UPDATE client_profiles SET active=0,updated_at=? WHERE client_id=?", (utc_now(), client_id))
-        return cur.rowcount > 0
 
     def save_case_metadata(self, metadata: CaseMetadata) -> CaseMetadata:
         metadata.to_dict()
-        client = self.get_client(metadata.client_id) or self.get_client("default")
-        if client is None: raise ValueError("Default client profile is missing")
-        metadata.client_id = client.client_id
-        metadata.retention_until = metadata.retention_until or (datetime.now(timezone.utc) + timedelta(days=client.retention_days)).replace(microsecond=0).isoformat()
+        metadata.client_id = "default"  # The column predates removal of client profiles.
+        metadata.retention_until = metadata.retention_until or (
+            datetime.now(timezone.utc) + timedelta(days=case_retention_days())).replace(microsecond=0).isoformat()
         with self._conn() as con:
             con.execute("""INSERT INTO case_metadata VALUES(?,?,?,?,?,?) ON CONFLICT(case_name) DO UPDATE SET
               client_id=excluded.client_id,acquisition_method=excluded.acquisition_method,retention_until=excluded.retention_until,manifest_json=excluded.manifest_json""",
@@ -307,7 +261,6 @@ def export_case_bundle(
     case_path: str,
     output_path: Optional[str] = None,
     *,
-    client_id: str = "default",
     extra_files: Optional[Iterable[str]] = None,
     extra_payloads: Optional[Dict[str, bytes]] = None,
     include_sources: bool = False,
@@ -480,7 +433,7 @@ def export_case_bundle(
             for member, data in payloads:
                 zf.writestr(member, data)
                 entries.append({"path": member, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-            manifest = ExportManifest(os.path.basename(case_dir), str(client_id or "default"), utc_now(), entries)
+            manifest = ExportManifest(os.path.basename(case_dir), utc_now(), entries)
             export_metadata = manifest.to_dict()
             export_metadata["source_policy"] = {
                 "include_sources": include_sources is True,
@@ -602,52 +555,3 @@ def verify_case_bundle(bundle_path: str) -> Dict[str, Any]:
             "files_checked": len(raw_entries),
             "failures": failures,
         }
-
-class LicenseRecord:
-    edition: str
-    licensee: str = ""
-    expires_at: str = ""
-    features: List[str] = field(default_factory=list)
-    signature: str = ""
-    schema_version: str = SCHEMA_VERSION
-
-
-def sign_license(record: Dict[str, Any], secret: str) -> Dict[str, Any]:
-    """Create an offline HMAC-signed license payload for controlled deployments."""
-    import hmac
-    payload = dict(record)
-    payload.pop("signature", None)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    payload["signature"] = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
-    return payload
-
-
-def verify_license(record: Dict[str, Any], secret: str, *, now: Optional[datetime] = None) -> Dict[str, Any]:
-    import hmac
-    payload = dict(record or {})
-    signature = str(payload.pop("signature", ""))
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    valid = bool(secret) and bool(signature) and hmac.compare_digest(signature, hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest())
-    expiry = str(payload.get("expires_at", "") or "")
-    if expiry:
-        try:
-            dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-            valid = valid and dt.replace(tzinfo=dt.tzinfo or timezone.utc) >= (now or datetime.now(timezone.utc))
-        except ValueError:
-            valid = False
-    return {"valid": valid, "edition": str(payload.get("edition", "community")), "features": list(payload.get("features", []) or []), "licensee": str(payload.get("licensee", "")), "expires_at": expiry}
-
-
-def load_license_file(path: str, secret: str) -> Dict[str, Any]:
-    """Load and verify an offline license without network calls or telemetry."""
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            record = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {"valid": False, "edition": "community", "features": [], "licensee": "", "expires_at": ""}
-    return verify_license(record, secret)
-
-
-def capabilities(edition: str = "community") -> Dict[str, bool]:
-    pro = str(edition).lower() == "pro"
-    return {"analysis": True, "dashboard": True, "live_local": True, "client_profiles": pro, "bundle_export": pro, "webhooks": pro, "ai": pro, "remote_collection": pro}

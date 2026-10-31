@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 import tempfile
 import unittest
 import zipfile
@@ -6,81 +7,34 @@ from pathlib import Path
 
 from triage_engine.product import (
     CaseMetadata,
-    ClientProfile,
-    ClientStore,
+    CaseMetadataStore,
     CollectionManifest,
-    capabilities,
     derive_disposition,
     export_case_bundle,
     verify_case_bundle,
-    sign_license,
-    verify_license,
 )
 
 
 class ProductWorkflowTests(unittest.TestCase):
-    def test_client_store_creates_default_profile(self):
-        with tempfile.TemporaryDirectory() as data_dir:
-            store = ClientStore(data_dir)
-
-            default = store.get_client("default")
-
-            self.assertIsNotNone(default)
-            self.assertEqual(default.display_name, "Default Client")
-            self.assertEqual(default.report_name, "Triage Engine Investigation")
-            self.assertTrue(default.active)
-            self.assertEqual(store.list_clients(active_only=True), [default])
-
-    def test_client_crud_and_soft_delete(self):
-        with tempfile.TemporaryDirectory() as data_dir:
-            store = ClientStore(data_dir)
-            profile = ClientProfile(
-                client_id="acme_01",
-                display_name="Acme",
-                report_name="Acme Incident Report",
-                retention_days=30,
-            )
-
-            saved = store.upsert_client(profile)
-            self.assertEqual(saved.display_name, "Acme")
-            self.assertEqual(store.get_client("acme_01").retention_days, 30)
-
-            saved.display_name = "Acme Updated"
-            store.upsert_client(saved)
-            self.assertEqual(store.get_client("acme_01").display_name, "Acme Updated")
-
-            self.assertTrue(store.delete_client("acme_01"))
-            self.assertFalse(store.get_client("acme_01").active)
-            self.assertEqual(store.list_clients(active_only=True), [store.get_client("default")])
-            self.assertFalse(store.delete_client("default"))
-            self.assertFalse(store.delete_client("missing"))
-
-    def test_case_metadata_retains_client_and_manifest_and_uses_retention(self):
-        with tempfile.TemporaryDirectory() as data_dir:
-            store = ClientStore(data_dir)
-            store.upsert_client(ClientProfile("acme", "Acme", retention_days=14))
+    def test_case_metadata_retains_manifest_and_uses_retention(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as data_dir, patch.dict("os.environ", {"TRIAGE_CASE_RETENTION_DAYS": "14"}):
+            store = CaseMetadataStore(data_dir)
             manifest = {"method": "local_live", "files": [{"path": "events.evtx"}]}
             metadata = store.save_case_metadata(
-                CaseMetadata("case-001", client_id="acme", acquisition_method="local_live", collection_manifest=manifest)
-            )
-
+                CaseMetadata("case-001", acquisition_method="local_live", collection_manifest=manifest))
             loaded = store.get_case_metadata("case-001")
-            self.assertEqual(loaded.client_id, "acme")
             self.assertEqual(loaded.collection_manifest, manifest)
             self.assertEqual(loaded.acquisition_method, "local_live")
-            self.assertTrue(loaded.retention_until)
-            self.assertGreater(loaded.retention_until, metadata.created_at)
-
-            metadata.client_id = "does-not-exist"
-            updated = store.save_case_metadata(metadata)
-            self.assertEqual(updated.client_id, "default")
-            self.assertEqual(store.get_case_metadata("case-001").client_id, "default")
+            self.assertEqual(loaded.client_id, "default")
+            days = (datetime.fromisoformat(loaded.retention_until) - datetime.fromisoformat(metadata.created_at)).days
+            self.assertIn(days, (13, 14))
             self.assertTrue(store.purge_case_metadata("case-001"))
             self.assertIsNone(store.get_case_metadata("case-001"))
 
     def test_case_metadata_rejects_invalid_acquisition_method(self):
         with tempfile.TemporaryDirectory() as data_dir:
-            store = ClientStore(data_dir)
+            store = CaseMetadataStore(data_dir)
             with self.assertRaises(ValueError):
                 store.save_case_metadata(CaseMetadata("bad", acquisition_method="not-a-method"))
 
@@ -132,13 +86,12 @@ class ProductWorkflowTests(unittest.TestCase):
             (case_dir / "findings.json").write_text('{"findings": []}', encoding="utf-8")
             outside = Path(temp_dir) / "outside.txt"
             outside.write_text("not part of case", encoding="utf-8")
-            bundle_path = export_case_bundle(str(case_dir), client_id="acme", extra_files=[str(outside)])
+            bundle_path = export_case_bundle(str(case_dir), extra_files=[str(outside)])
 
             with zipfile.ZipFile(bundle_path) as bundle:
                 self.assertEqual(set(bundle.namelist()), {"report.html", "findings.json", "export_manifest.json"})
                 manifest = json.loads(bundle.read("export_manifest.json"))
                 self.assertEqual(manifest["case_name"], "case-001")
-                self.assertEqual(manifest["client_id"], "acme")
                 for entry in manifest["files"]:
                     data = bundle.read(entry["path"])
                     self.assertEqual(entry["size"], len(data))
@@ -190,23 +143,5 @@ class ProductWorkflowTests(unittest.TestCase):
                 export_case_bundle(str(case_dir), extra_payloads={"../escape.txt": b"bad"})
             with self.assertRaisesRegex(ValueError, "Duplicate"):
                 export_case_bundle(str(case_dir), extra_payloads={"findings.json": b"duplicate"})
-    def test_capabilities_and_ai_disabled_behavior(self):
-        community = capabilities()
-        pro = capabilities("PRO")
-        self.assertTrue(community["analysis"])
-        self.assertFalse(community["client_profiles"])
-        self.assertFalse(community["ai"])
-        self.assertTrue(pro["client_profiles"])
-        self.assertTrue(pro["bundle_export"])
-        self.assertTrue(pro["remote_collection"])
-
-    def test_offline_license_signing_and_expiry(self):
-        record = sign_license({"edition": "pro", "licensee": "Acme", "features": ["webhooks"]}, "test-secret")
-        self.assertTrue(verify_license(record, "test-secret")["valid"])
-        self.assertFalse(verify_license(record, "wrong-secret")["valid"])
-        expired = sign_license({"edition": "pro", "expires_at": "2020-01-01T00:00:00+00:00"}, "test-secret")
-        self.assertFalse(verify_license(expired, "test-secret")["valid"])
-
-
 if __name__ == "__main__":
     unittest.main()

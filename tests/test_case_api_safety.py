@@ -1,4 +1,4 @@
-"""Focused API coverage for MSP profile and investigation safety contracts."""
+"""Focused API coverage for case metadata, retention, export and investigation safety contracts."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
-class MSPApiTests(unittest.TestCase):
+class CaseApiSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import server
         import triage_engine.auth_store as auth
         import triage_engine.review_store as reviews
 
-        cls.root = tempfile.mkdtemp(prefix="triage-msp-api-")
+        cls.root = tempfile.mkdtemp(prefix="triage-case-api-")
         cls.cases = os.path.join(cls.root, "cases")
         cls.uploads = os.path.join(cls.root, "uploads")
         cls.data = os.path.join(cls.root, "data")
@@ -53,49 +53,32 @@ class MSPApiTests(unittest.TestCase):
         import server
         server._reset_security_state_for_tests()
 
-    def _case(self, name="msp-case"):
+    def _case(self, name="metadata-case"):
         path = os.path.join(self.cases, name)
         os.makedirs(path, exist_ok=True)
         with open(os.path.join(path, "findings.json"), "w", encoding="utf-8") as fh:
             json.dump({"case": {"case_name": name}, "findings": [], "incidents": []}, fh)
         return path
 
-    def test_client_metadata_payload_and_bundle(self):
+    def test_case_metadata_payload_and_bundle(self):
         self._case()
-        created = self.client.post("/api/clients", json={"client_id": "acme", "display_name": "Acme Corp", "retention_days": 30})
-        self.assertEqual(created.status_code, 200)
         updated = self.client.patch(
-            "/api/cases/msp-case/metadata",
-            json={"client_id": "acme", "acquisition_method": "upload", "collection_manifest": {"files": []}},
+            "/api/cases/metadata-case/metadata",
+            json={"acquisition_method": "upload", "collection_manifest": {"files": []}},
         )
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.json()["collection_manifest"]["method"], "upload")
-        payload = self.client.get("/api/cases/msp-case")
+        self.assertNotIn("client_id", updated.json())
+        payload = self.client.get("/api/cases/metadata-case")
         self.assertEqual(payload.status_code, 200)
-        self.assertEqual(payload.json()["case_metadata"]["client_id"], "acme")
         self.assertEqual(payload.json()["case"]["acquisition_method"], "upload")
-        bundle = self.client.post("/api/cases/msp-case/bundle")
+        bundle = self.client.post("/api/cases/metadata-case/bundle")
         self.assertEqual(bundle.status_code, 200)
         self.assertIn("application/zip", bundle.headers.get("content-type", ""))
 
-    def test_bundle_export_dispatches_canonical_webhook(self):
-        import server
-        self._case("bundle-webhook-case")
-        with patch.object(server, "dispatch_webhook_event", return_value={"attempted": 0, "sent": 0, "failed": 0}) as dispatch_mock:
-            response = self.client.post("/api/cases/bundle-webhook-case/bundle")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(dispatch_mock.call_count, 1)
-        event, payload = dispatch_mock.call_args.args
-        self.assertEqual(event, "bundle.exported")
-        self.assertEqual(payload["case_name"], "bundle-webhook-case")
-        self.assertEqual(payload["client_id"], "default")
-        self.assertEqual(payload["schema_version"], "1.0")
-        self.assertIn("event_id", payload)
-        self.assertNotIn("\\", payload["artifact_ref"])
-        self.assertEqual(payload["artifact_ref"].split("/")[-1], "report.html")
-        self.assertIn("artifact_ref", payload)
-        self.assertGreater(payload["artifact_size"], 0)
-        self.assertIn("artifact_bundle_hash", payload)
+    def test_client_profile_and_capability_endpoints_are_gone(self):
+        for method, path in (("get", "/api/clients"), ("post", "/api/clients"), ("get", "/api/capabilities")):
+            self.assertIn(getattr(self.client, method)(path).status_code, (404, 405))
 
     def test_explicit_purge_requires_elapsed_retention(self):
         self._case("expired-case")
@@ -136,12 +119,11 @@ class MSPApiTests(unittest.TestCase):
 
         with patch("server.Thread", ImmediateThread):
             response = self.client.post(
-                "/api/investigate?client_id=acme&acquisition_method=upload&collection_manifest=%7B%22files%22%3A%5B%5D%7D",
+                "/api/investigate?acquisition_method=upload&collection_manifest=%7B%22files%22%3A%5B%5D%7D",
                 files=[("files", ("sample.evtx", b"EVTX", "application/octet-stream"))],
             )
         self.assertEqual(response.status_code, 200)
         request = captured["args"][1]
-        self.assertEqual(request.client_id, "acme")
         self.assertEqual(request.collection_manifest["method"], "upload")
 
     def test_live_elevation_returns_already_elevated_without_launching_process(self):

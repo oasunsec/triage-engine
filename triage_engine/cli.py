@@ -229,7 +229,6 @@ def cmd_investigate(args: argparse.Namespace) -> int:
         sigma_rule_paths=_sigma_rule_paths(args),
         tuning_paths=args.tuning or [],
         no_fp_filter=args.no_fp_filter,
-        client_id=getattr(args, "client_id", "default") or "default",
         acquisition_method=getattr(args, "acquisition_method", "local_live" if input_mode == "live" else "upload"),
         collection_manifest=json.loads(args.collection_manifest) if getattr(args, "collection_manifest", "") else None,
         artifact_bundle=getattr(args, "artifacts", None),
@@ -511,7 +510,6 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--sigma-rules", action="append", default=[], help="Sigma rule file or directory (repeatable)")
     inv.add_argument("--overwrite", action="store_true", help="Overwrite case directory when it exists")
     inv.add_argument("--resume", action="store_true", help="Resume existing/latest versioned case")
-    inv.add_argument("--client-id", default="default", help="MSP client profile ID")
     inv.add_argument("--acquisition-method", choices=("upload", "local_live", "portable_collector", "remote_collection"), help="Evidence acquisition method")
     inv.add_argument("--collection-manifest", help="Collection manifest JSON object")
     inv.set_defaults(func=cmd_investigate)

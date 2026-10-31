@@ -83,7 +83,7 @@ from triage_engine.tuning import load_tuning
 from triage_engine.product import (
     CaseMetadata,
     CollectionManifest,
-    ClientStore,
+    CaseMetadataStore,
     derive_disposition,
 )
 
@@ -138,8 +138,6 @@ class InvestigationRequest:
     tuning_paths: List[str] = field(default_factory=list)
     no_fp_filter: bool = False
 
-    # MSP workflow metadata (optional for backwards compatibility)
-    client_id: str = "default"
     acquisition_method: str = "upload"
     collection_manifest: Optional[Dict[str, Any]] = None
     artifact_bundle: Optional[str] = None
@@ -177,7 +175,6 @@ class InvestigationResult:
     sigma_summary: Dict[str, Any] = field(default_factory=dict)
     collection_quality_summary: Dict[str, Any] = field(default_factory=dict)
     response_priority: str = "P4"
-    client_id: str = "default"
     triage_disposition: Dict[str, Any] = field(default_factory=dict)
 
     artifacts: Dict[str, str] = field(default_factory=dict)
@@ -2315,7 +2312,6 @@ def run_investigation(
         if evidence_scope["needs_scope_review"]:
             triage.recommended_next.insert(0, "Confirm the evidence scope: " + " ".join(evidence_scope["warnings"]))
         case_meta["triage_disposition"] = triage.to_dict()
-        case_meta["client_id"] = request.client_id or "default"
         case_meta["acquisition_method"] = request.acquisition_method or ("local_live" if request.input_mode == "live" else "upload")
         manifest = request.collection_manifest or {
             "method": case_meta["acquisition_method"],
@@ -2329,14 +2325,12 @@ def run_investigation(
             # Keep product metadata beside the selected case root. This makes
             # isolated CLI/test workspaces self-contained and avoids leaking
             # customer metadata into the source checkout's default data dir.
-            store = ClientStore(data_dir=os.path.join(os.path.dirname(cases_root), "data"))
+            store = CaseMetadataStore(data_dir=os.path.join(os.path.dirname(cases_root), "data"))
             metadata = store.save_case_metadata(CaseMetadata(
                 case_name=resolved_case_name,
-                client_id=request.client_id or "default",
                 acquisition_method=case_meta["acquisition_method"],
                 collection_manifest=manifest,
             ))
-            case_meta["client_id"] = metadata.client_id
             case_meta["retention_until"] = metadata.retention_until
             with open(os.path.join(case_path, "case_metadata.json"), "w", encoding="utf-8") as fh:
                 json.dump(metadata.to_dict(), fh, indent=2, sort_keys=True)
@@ -2547,7 +2541,6 @@ def run_investigation(
             sigma_summary=case_meta["sigma_summary"],
             collection_quality_summary=case_meta["collection_quality_summary"],
             response_priority=case_meta["response_priority"],
-            client_id=case_meta.get("client_id", request.client_id or "default"),
             triage_disposition=case_meta.get("triage_disposition", {}),
             artifacts=artifacts,
         )

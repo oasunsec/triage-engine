@@ -65,12 +65,6 @@ from triage_engine.forensic_api import build_forensics_router
 from triage_engine.logging_config import configure_logging
 from parser.live_reader import classify_live_channel_error
 from triage_engine.service import InvestigationRequest, ProgressReporter, run_investigation
-from triage_engine.webhooks import (
-    WEBHOOK_SCHEMA_VERSION,
-    build_event_id,
-    dispatch_webhook_event,
-    resolve_webhook_config_path,
-)
 from triage_engine.job_store import (
     create_job,
     update_job,
@@ -84,11 +78,8 @@ from triage_engine.job_store import (
 from triage_engine.product import (
     ACQUISITION_METHODS,
     CaseMetadata,
-    ClientProfile,
-    ClientStore,
+    CaseMetadataStore,
     CollectionManifest,
-    capabilities,
-    load_license_file,
     export_case_bundle,
 )
 from triage_engine.review_store import (
@@ -543,200 +534,12 @@ class _JobReporter:
 # Background investigation worker
 # ---------------------------------------------------------------------------
 
-def _emit_completion_webhooks(
-    *,
-    job_id: str,
-    request: InvestigationRequest,
-    result: Any,
-    incident_ids: Optional[List[str]] = None,
-) -> None:
-    disposition = dict(getattr(result, "triage_disposition", {}) or {})
-    disposition_value = str(disposition.get("disposition") or "No promoted incident")
-    confidence = str(disposition.get("confidence") or "unknown")
-    try:
-        confidence_score = int(disposition.get("confidence_score") or 0)
-    except (TypeError, ValueError):
-        confidence_score = 0
-    artifact_ref = _case_artifact_ref(result)
-    summary = _webhook_case_summary(result, disposition)
-    payload: Dict[str, Any] = {
-        "schema_version": WEBHOOK_SCHEMA_VERSION,
-        "event_id": build_event_id("case.completed", {
-            "case_name": result.case_name,
-            "job_id": job_id,
-        }),
-        "client_id": str(getattr(result, "client_id", "") or request.client_id or "default"),
-        "case_id": result.case_name,
-        "case_name": result.case_name,
-        "job_id": job_id,
-        "requested_by": request.requested_by or "",
-        "input_mode": request.input_mode,
-        "input_source": request.input_source,
-        "response_priority": str(getattr(result, "response_priority", "P4") or "P4"),
-        "triage_disposition": disposition_value,
-        "confidence": confidence,
-        "confidence_score": confidence_score,
-        "summary": summary,
-        "artifact_ref": artifact_ref,
-        "signal_count": int(getattr(result, "signal_count", 0) or 0),
-        "finding_count": int(getattr(result, "finding_count", 0) or 0),
-        "incident_count": int(getattr(result, "incident_count", 0) or 0),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    if incident_ids:
-        payload["incident_ids"] = [incident_id for incident_id in incident_ids if incident_id]
-
-    completed_stats = dispatch_webhook_event(
-        "case.completed",
-        payload,
-        root_dir=ROOT_DIR,
-        config_path=resolve_webhook_config_path(ROOT_DIR),
-        logger=SERVER_LOGGER,
-    )
-    SERVER_LOGGER.info(
-        "webhook_dispatch_result",
-        extra={
-            "request_id": request.request_id or "",
-            "user": request.requested_by or "",
-            "job_id": job_id,
-            "case_name": result.case_name,
-            "event": "case.completed",
-            "attempted": int(completed_stats.get("attempted", 0)),
-            "sent": int(completed_stats.get("sent", 0)),
-            "failed": int(completed_stats.get("failed", 0)),
-        },
-    )
-
-    response_priority = str(payload.get("response_priority", "P4")).upper()
-    disposition_should_escalate = (
-        disposition_value == "Escalate"
-        or (response_priority in {"P1", "P2"} and int(payload.get("incident_count", 0)) > 0)
-    )
-    if not disposition_should_escalate:
-        return
-    escalated_payload = dict(payload)
-    escalated_payload["schema_version"] = WEBHOOK_SCHEMA_VERSION
-    escalated_payload["event_id"] = build_event_id("case.escalated", {
-        "case_name": result.case_name,
-        "job_id": job_id,
-    })
-    escalated_stats = dispatch_webhook_event(
-        "case.escalated",
-        escalated_payload,
-        root_dir=ROOT_DIR,
-        config_path=resolve_webhook_config_path(ROOT_DIR),
-        logger=SERVER_LOGGER,
-    )
-    SERVER_LOGGER.info(
-        "webhook_dispatch_result",
-        extra={
-            "request_id": request.request_id or "",
-            "user": request.requested_by or "",
-            "job_id": job_id,
-            "case_name": result.case_name,
-            "event": "case.escalated",
-            "attempted": int(escalated_stats.get("attempted", 0)),
-            "sent": int(escalated_stats.get("sent", 0)),
-            "failed": int(escalated_stats.get("failed", 0)),
-        },
-    )
-
-
-def _webhook_case_summary(result: Any, disposition: Dict[str, Any]) -> str:
-    """Build a concise, deterministic operational summary without raw evidence."""
-    case_name = str(getattr(result, "case_name", "") or "")
-    priority = str(getattr(result, "response_priority", "P4") or "P4")
-    incidents = int(getattr(result, "incident_count", 0) or 0)
-    findings = int(getattr(result, "finding_count", 0) or 0)
-    signals = int(getattr(result, "signal_count", 0) or 0)
-    disposition_value = str(disposition.get("disposition") or "No promoted incident")
-    confidence = str(disposition.get("confidence") or "unknown")
-    try:
-        confidence_score = int(disposition.get("confidence_score") or 0)
-    except (TypeError, ValueError):
-        confidence_score = 0
-    reasons = [str(item) for item in (disposition.get("reasons") or []) if str(item)]
-    summary = (
-        f"Case {case_name} completed with response priority {priority}, "
-        f"{signals} signal(s), {findings} finding(s), and {incidents} promoted incident(s). "
-        f"Deterministic disposition: {disposition_value} ({confidence}, {confidence_score}% confidence)."
-    )
-    if reasons:
-        summary += " Factors: " + "; ".join(reasons[:5]) + "."
-    return summary
-
-
-def _case_artifact_ref(result: Any) -> str:
-    """Return a stable case-relative artifact reference without exposing a local path."""
-    return _case_artifact_ref_from_name(getattr(result, "case_name", ""))
-
-
 def _case_artifact_ref_from_name(case_name: Any) -> str:
     """Return a stable case-relative report reference without exposing a local path."""
     case_name = str(case_name or "").strip()
     if not case_name:
         return ""
     return os.path.join(case_name, "report.html").replace(os.sep, "/")
-
-
-def _sha256_file(path: str) -> str:
-    try:
-        digest = hashlib.sha256()
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-    except OSError:
-        return ""
-
-
-def _emit_bundle_webhook(*, case_name: str, client_id: str, output_path: str) -> None:
-    """Record a canonical bundle.exported event when a portable ZIP is created."""
-    if not os.path.isfile(output_path):
-        return
-    try:
-        file_size = int(os.path.getsize(output_path) or 0)
-    except OSError:
-        file_size = 0
-    # The export bundle filename is intentionally random for download safety,
-    # so idempotency must use a stable export-operation ID rather than the
-    # temporary filename. Retrying one dispatch keeps the same ID; exporting
-    # the same case again is a distinct operation.
-    bundle_event_id = build_event_id("bundle.exported", {
-        "case_name": case_name,
-        "job_id": uuid.uuid4().hex,
-    })
-    payload: Dict[str, Any] = {
-        "schema_version": WEBHOOK_SCHEMA_VERSION,
-        "event_id": bundle_event_id,
-        "client_id": client_id,
-        "case_id": case_name,
-        "case_name": case_name,
-        "artifact_ref": _case_artifact_ref_from_name(case_name),
-        "artifact_name": os.path.basename(output_path),
-        "artifact_size": file_size,
-        "artifact_bundle_hash": _sha256_file(output_path),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    stats = dispatch_webhook_event(
-        "bundle.exported",
-        payload,
-        root_dir=ROOT_DIR,
-        config_path=resolve_webhook_config_path(ROOT_DIR),
-        logger=SERVER_LOGGER,
-    )
-    SERVER_LOGGER.info(
-        "webhook_dispatch_result",
-        extra={
-            "user": "",
-            "job_id": payload["event_id"],
-            "case_name": case_name,
-            "event": "bundle.exported",
-            "attempted": int(stats.get("attempted", 0)),
-            "sent": int(stats.get("sent", 0)),
-            "failed": int(stats.get("failed", 0)),
-        },
-    )
 
 
 def _investigate_worker(
@@ -797,25 +600,6 @@ def _investigate_worker(
                 carry_forward_reviews(result.case_name, fids, iids)
         except Exception:
             pass  # review carry-forward is best-effort
-        try:
-            _emit_completion_webhooks(
-                job_id=job_id,
-                request=request,
-                result=result,
-                incident_ids=incident_ids,
-            )
-        except Exception:
-            # Webhook dispatch is always best-effort and must never fail the job.
-            SERVER_LOGGER.warning(
-                "webhook_dispatch_unexpected_error",
-                extra={
-                    "request_id": request.request_id or "",
-                    "user": request.requested_by or "",
-                    "job_id": job_id,
-                    "case_name": result.case_name,
-                },
-                exc_info=True,
-            )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         update_job(
@@ -884,7 +668,6 @@ def _submit_investigation_job(
 # ---------------------------------------------------------------------------
 
 _SAFE_CASE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
-_SAFE_CLIENT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 
 
 def _validate_case_name(name: Optional[str]) -> Optional[str]:
@@ -896,13 +679,6 @@ def _validate_case_name(name: Optional[str]) -> Optional[str]:
     if not _SAFE_CASE_NAME_RE.match(name):
         raise HTTPException(400, "Case name must be 1-128 alphanumeric/dash/dot/underscore characters")
     return name
-
-
-def _validate_client_id(client_id: Optional[str]) -> str:
-    value = str(client_id or "default").strip() or "default"
-    if not _SAFE_CLIENT_ID_RE.match(value):
-        raise HTTPException(400, "client_id must be 1-64 alphanumeric/dash/underscore characters")
-    return value
 
 
 def _validate_evtx_path(path: str) -> str:
@@ -962,18 +738,9 @@ def _validate_acquisition_method(value: Optional[str], *, default: str) -> str:
     return method
 
 
-def _product_store() -> ClientStore:
+def _product_store() -> CaseMetadataStore:
     """Construct against the active API data root (also makes test isolation simple)."""
-    return ClientStore(data_dir=DATA_ROOT)
-
-
-def _require_client_id(client_id: Optional[str]) -> str:
-    """Validate and resolve a client profile before accepting evidence."""
-    resolved = _validate_client_id(client_id)
-    profile = _product_store().get_client(resolved)
-    if not profile or not profile.active:
-        raise HTTPException(400, "Unknown or inactive client profile")
-    return resolved
+    return CaseMetadataStore(data_dir=DATA_ROOT)
 
 
 def _metadata_from_case_artifact(case_path: str, case_name: str) -> Optional[CaseMetadata]:
@@ -985,7 +752,6 @@ def _metadata_from_case_artifact(case_path: str, case_name: str) -> Optional[Cas
             raw = json.load(fh)
         return CaseMetadata(
             case_name=case_name,
-            client_id=str(raw.get("client_id") or "default"),
             acquisition_method=str(raw.get("acquisition_method") or "upload"),
             created_at=str(raw.get("created_at") or ""),
             retention_until=str(raw.get("retention_until") or ""),
@@ -1630,51 +1396,11 @@ class LiveInvestigateRequest(BaseModel):
     enable_sigma: bool = False
     since_minutes: int = 30
     channels: List[str] = []
-    client_id: str = "default"
     acquisition_method: str = "local_live"
     collection_manifest: Optional[Dict[str, Any]] = None
 
 
-class ClientCreateRequest(BaseModel):
-    client_id: str
-    display_name: str
-    report_name: str = ""
-    contact: str = ""
-    logo: str = ""
-    accent_color: str = "#2563eb"
-    retention_days: int = Field(90, ge=1, le=3650)
-    active: bool = True
-
-
-class ClientPatchRequest(BaseModel):
-    display_name: Optional[str] = None
-    report_name: Optional[str] = None
-    contact: Optional[str] = None
-    logo: Optional[str] = None
-    accent_color: Optional[str] = None
-    retention_days: Optional[int] = Field(None, ge=1, le=3650)
-    active: Optional[bool] = None
-
-
-class ClientUpdateRequest(ClientPatchRequest):
-    client_id: str
-
-
-class ClientResponse(BaseModel):
-    client_id: str
-    display_name: str
-    report_name: str = ""
-    contact: str = ""
-    logo: str = ""
-    accent_color: str = "#2563eb"
-    retention_days: int = 90
-    active: bool = True
-    created_at: str
-    updated_at: str
-
-
 class CaseMetadataPatchRequest(BaseModel):
-    client_id: Optional[str] = None
     acquisition_method: Optional[str] = None
     collection_manifest: Optional[Dict[str, Any]] = None
     retention_until: Optional[str] = None
@@ -1682,7 +1408,6 @@ class CaseMetadataPatchRequest(BaseModel):
 
 class CaseMetadataResponse(BaseModel):
     case_name: str
-    client_id: str
     acquisition_method: str
     created_at: str
     retention_until: str = ""
@@ -1855,7 +1580,6 @@ class CaseListItemResponse(BaseModel):
     finding_count: int = 0
     incident_count: int = 0
     response_priority: Optional[str] = None
-    client_id: str = "default"
     acquisition_method: str = ""
     retention_until: str = ""
     disposition: Optional[Dict[str, Any]] = None
@@ -2315,7 +2039,6 @@ def _queue_quick_check_live(request: Request, token: str) -> Dict[str, Any]:
         since_minutes=30,
         request_id=_request_id_for_log(request),
         requested_by="quick-check",
-        client_id="default",
         acquisition_method="local_live",
         collection_manifest={"method": "local_live", "profile": "quick_check", "channels": channels, "since_minutes": 30},
     )
@@ -2989,90 +2712,6 @@ async def admin_list_backups(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# API: Client profiles
-# ---------------------------------------------------------------------------
-@app.get("/api/capabilities", tags=["Admin"])
-async def get_capabilities(request: Request):
-    """Report local entitlement capabilities; no telemetry or license upload."""
-    _require_user(request, ("viewer", "analyst", "admin"))
-    edition = "community"
-    license_path = os.environ.get("TRIAGE_LICENSE_PATH", "").strip()
-    license_secret = os.environ.get("TRIAGE_LICENSE_SECRET", "")
-    license_info = {"valid": False, "edition": edition, "features": []}
-    if license_path:
-        license_info = load_license_file(license_path, license_secret)
-        if license_info.get("valid"):
-            edition = str(license_info.get("edition") or edition)
-    return {"schema_version": "1.0", "edition": edition, "license": license_info, "capabilities": capabilities(edition)}
-
-
-@app.get("/api/clients", tags=["Cases"], response_model=List[ClientResponse])
-async def list_client_profiles(request: Request, active_only: bool = Query(False)):
-    """List MSP client profiles available for case attribution."""
-    _require_user(request, ("viewer", "analyst", "admin"))
-    return [profile.to_dict() for profile in _product_store().list_clients(active_only=active_only)]
-
-
-@app.get("/api/clients/{client_id}", tags=["Cases"], response_model=ClientResponse)
-async def get_client_profile(client_id: str, request: Request):
-    _require_user(request, ("viewer", "analyst", "admin"))
-    profile = _product_store().get_client(client_id)
-    if not profile:
-        raise HTTPException(404, f"Client not found: {client_id}")
-    return profile.to_dict()
-
-
-@app.post("/api/clients", tags=["Cases"], response_model=ClientResponse)
-async def create_client_profile(request: Request, body: ClientCreateRequest):
-    actor = _require_user(request, ("analyst", "admin"))
-    try:
-        profile = _product_store().upsert_client(ClientProfile(**body.model_dump()))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    record_audit_event(actor_username=actor["username"], action="create_client", target_username=profile.client_id)
-    return profile.to_dict()
-
-
-@app.patch("/api/clients/{client_id}", tags=["Cases"], response_model=ClientResponse)
-async def patch_client_profile(client_id: str, request: Request, body: ClientPatchRequest):
-    actor = _require_user(request, ("analyst", "admin"))
-    store = _product_store()
-    profile = store.get_client(client_id)
-    if not profile:
-        raise HTTPException(404, f"Client not found: {client_id}")
-    for field, value in body.dict(exclude_unset=True).items():
-        setattr(profile, field, value)
-    try:
-        profile = store.upsert_client(profile)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    record_audit_event(actor_username=actor["username"], action="update_client", target_username=client_id)
-    return profile.to_dict()
-
-
-@app.patch("/api/clients", tags=["Cases"], response_model=ClientResponse)
-async def patch_client_profile_by_body(request: Request, body: ClientUpdateRequest):
-    """Compatibility form of the profile update endpoint using a body client_id."""
-    patch_body = ClientPatchRequest(**body.dict(exclude={"client_id"}, exclude_unset=True))
-    return await patch_client_profile(body.client_id, request, patch_body)
-
-
-@app.delete("/api/clients/{client_id}", tags=["Cases"])
-async def delete_client_profile(client_id: str, request: Request):
-    actor = _require_user(request, ("admin",))
-    if not _product_store().delete_client(client_id):
-        raise HTTPException(404, f"Client not found or protected: {client_id}")
-    record_audit_event(actor_username=actor["username"], action="delete_client", target_username=client_id)
-    return {"deleted": client_id}
-
-
-@app.delete("/api/clients", tags=["Cases"])
-async def delete_client_profile_by_query(request: Request, client_id: str = Query(...)):
-    """Compatibility form of profile deletion using a query client_id."""
-    return await delete_client_profile(client_id, request)
-
-
-# ---------------------------------------------------------------------------
 # API: Cases
 # ---------------------------------------------------------------------------
 def _collect_case_summaries() -> List[Dict[str, Any]]:
@@ -3143,11 +2782,9 @@ def _collect_case_summaries() -> List[Dict[str, Any]]:
 
         metadata = stored_metadata.get(name) or _metadata_from_case_artifact(case_dir, name)
         if metadata:
-            info["client_id"] = metadata.client_id
             info["acquisition_method"] = metadata.acquisition_method
             info["retention_until"] = metadata.retention_until
         else:
-            info.setdefault("client_id", "default")
             info.setdefault("acquisition_method", "")
             info.setdefault("retention_until", "")
 
@@ -3228,7 +2865,6 @@ async def patch_case_metadata(case_name: str, request: Request, body: CaseMetada
     ) if body.collection_manifest is not None else (existing.collection_manifest if existing else {})
     metadata = CaseMetadata(
         case_name=resolved_name,
-        client_id=_require_client_id(body.client_id or (existing.client_id if existing else "default")),
         acquisition_method=method,
         created_at=existing.created_at if existing else datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         retention_until=body.retention_until if body.retention_until is not None else (existing.retention_until if existing else ""),
@@ -3305,24 +2941,11 @@ async def create_case_bundle(case_name: str, request: Request):
         export_case_bundle(
             case_path,
             output_path,
-            client_id=metadata.client_id if metadata else "default",
             extra_payloads={"review_state.json": json.dumps(review_snapshot, indent=2, sort_keys=True).encode("utf-8"),
                             "analyst_review.md": _review_summary_markdown(case_path, review_snapshot).encode("utf-8")},
         )
     except (OSError, ValueError) as exc:
         raise HTTPException(500, f"Case bundle creation failed: {exc}")
-    try:
-        _emit_bundle_webhook(
-            case_name=resolved_name,
-            client_id=str(metadata.client_id if metadata else "default"),
-            output_path=output_path,
-        )
-    except Exception:
-        SERVER_LOGGER.warning(
-            "webhook_dispatch_unexpected_error",
-            extra={"case_name": resolved_name, "event": "bundle.exported"},
-            exc_info=True,
-        )
     _audit_case_access(user, case_name=resolved_name, endpoint="/api/cases/{case_name}/bundle")
     record_audit_event(actor_username=user["username"], action="export_case_bundle", target_username=resolved_name)
     filename = _safe_download_filename(f"triage-{resolved_name}-bundle", "zip")
@@ -3400,7 +3023,6 @@ async def get_case(case_name: str, request: Request):
         metadata_payload = metadata.to_dict()
         data["case_metadata"] = metadata_payload
         case_payload = data.setdefault("case", {})
-        case_payload.setdefault("client_id", metadata.client_id)
         case_payload.setdefault("acquisition_method", metadata.acquisition_method)
         case_payload.setdefault("retention_until", metadata.retention_until)
         case_payload.setdefault("collection_manifest", metadata.collection_manifest)
@@ -3436,7 +3058,6 @@ async def export_case(case_name: str, request: Request):
     if metadata:
         payload["case_metadata"] = metadata.to_dict()
         case_payload = payload.setdefault("case", {})
-        case_payload.setdefault("client_id", metadata.client_id)
         case_payload.setdefault("acquisition_method", metadata.acquisition_method)
         case_payload.setdefault("retention_until", metadata.retention_until)
         case_payload.setdefault("collection_manifest", metadata.collection_manifest)
@@ -3725,7 +3346,6 @@ async def start_investigation(
     files: List[UploadFile] = File(...),
     case_name: Optional[str] = Query(None),
     enable_sigma: bool = Query(False),
-    client_id: str = Query("default"),
     acquisition_method: str = Query("upload"),
     collection_manifest: Optional[str] = Query(None),
 ):
@@ -3733,7 +3353,6 @@ async def start_investigation(
     actor = _require_user(request, ("analyst", "admin"))
     request_id = _request_id_for_log(request)
     case_name = _validate_case_name(case_name)
-    client_id = _require_client_id(client_id)
     acquisition_method = _validate_acquisition_method(acquisition_method, default="upload")
     manifest = _parse_collection_manifest(collection_manifest, acquisition_method)
 
@@ -3784,7 +3403,6 @@ async def start_investigation(
         enable_sigma=enable_sigma,
         request_id=request_id,
         requested_by=actor["username"],
-        client_id=client_id,
         acquisition_method=acquisition_method,
         collection_manifest=manifest,
     )
@@ -3796,7 +3414,7 @@ async def start_investigation(
         actor_username=actor["username"],
         action="start_investigation_upload",
         target_username=resolved_name,
-        details={"job_id": job_id, "file_count": len(uploaded), "enable_sigma": enable_sigma, "client_id": client_id},
+        details={"job_id": job_id, "file_count": len(uploaded), "enable_sigma": enable_sigma},
     )
 
     SERVER_LOGGER.info(
@@ -3833,7 +3451,6 @@ async def start_investigation_from_path(
     evtx_path: str = Query(..., description="Local path to EVTX file or directory"),
     case_name: Optional[str] = Query(None),
     enable_sigma: bool = Query(False),
-    client_id: str = Query("default"),
     acquisition_method: str = Query("portable_collector"),
     collection_manifest: Optional[str] = Query(None),
 ):
@@ -3842,7 +3459,6 @@ async def start_investigation_from_path(
     request_id = _request_id_for_log(request)
     evtx_path = _validate_evtx_path(evtx_path)
     case_name = _validate_case_name(case_name)
-    client_id = _require_client_id(client_id)
     acquisition_method = _validate_acquisition_method(acquisition_method, default="portable_collector")
     manifest = _parse_collection_manifest(collection_manifest, acquisition_method)
 
@@ -3856,7 +3472,6 @@ async def start_investigation_from_path(
         enable_sigma=enable_sigma,
         request_id=request_id,
         requested_by=actor["username"],
-        client_id=client_id,
         acquisition_method=acquisition_method,
         collection_manifest=manifest,
     )
@@ -3868,7 +3483,7 @@ async def start_investigation_from_path(
         actor_username=actor["username"],
         action="start_investigation_path",
         target_username=resolved_name,
-        details={"job_id": job_id, "input_path": evtx_path, "enable_sigma": enable_sigma, "client_id": client_id},
+        details={"job_id": job_id, "input_path": evtx_path, "enable_sigma": enable_sigma},
     )
 
     SERVER_LOGGER.info(
@@ -3908,7 +3523,6 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
 
     case_name = _validate_case_name(body.case_name)
     channels = _validate_live_channels(body.channels)
-    client_id = _require_client_id(body.client_id)
     acquisition_method = _validate_acquisition_method(body.acquisition_method, default="local_live")
     manifest = _parse_collection_manifest(body.collection_manifest, acquisition_method)
     since_minutes = int(body.since_minutes or 30)
@@ -3926,7 +3540,6 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
         since_minutes=since_minutes,
         request_id=request_id,
         requested_by=actor["username"],
-        client_id=client_id,
         acquisition_method=acquisition_method,
         collection_manifest=manifest,
     )
@@ -3943,7 +3556,6 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
             "channels": channels,
             "since_minutes": since_minutes,
             "enable_sigma": bool(body.enable_sigma),
-            "client_id": client_id,
         },
     )
 
@@ -4195,21 +3807,9 @@ async def export_quick_check_bundle(case_name: str, request: Request):
     os.makedirs(export_dir, exist_ok=True)
     output_path = os.path.join(export_dir, f"triage-{os.path.basename(case_path)}-{uuid.uuid4().hex[:10]}.zip")
     try:
-        export_case_bundle(case_path, output_path, client_id="default")
+        export_case_bundle(case_path, output_path)
     except (OSError, ValueError) as exc:
         raise HTTPException(500, f"Quick Check export failed: {exc}")
-    try:
-        _emit_bundle_webhook(
-            case_name=os.path.basename(case_path),
-            client_id="default",
-            output_path=output_path,
-        )
-    except Exception:
-        SERVER_LOGGER.warning(
-            "webhook_dispatch_unexpected_error",
-            extra={"case_name": os.path.basename(case_path), "event": "bundle.exported"},
-            exc_info=True,
-        )
     filename = _safe_download_filename(f"triage-{os.path.basename(case_path)}-bundle", "zip")
     return FileResponse(
         output_path,
