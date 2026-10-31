@@ -16,7 +16,7 @@ from triage_engine.path_safety import is_link_or_reparse, reject_path_links
 KINDS = {"registry_run": "T1547.001", "scheduled_task": "T1053.005", "service": "T1543.003"}
 NTFS_KINDS = {"ntfs_mft", "ntfs_usn_journal"}
 ARTIFACT_FILE_KINDS = {"persistence_records", "chromium_history", "pecmd_jsonl", "prefetch_source", "scheduled_task_xml",
-                       "registry_hive", *NTFS_KINDS}
+                       "registry_hive", "registry_hive_log", *NTFS_KINDS}
 # Registry hives have their own per-file and aggregate budget; other members share 64 MiB.
 MAX_HIVE_BUNDLE_BYTES = 1024**3
 # Members per bundle: one host's full System32\Tasks folder can hold hundreds of files.
@@ -156,7 +156,14 @@ def read_forensic_bundle(
         large_ntfs = allow_large_ntfs and item["kind"] in NTFS_KINDS
         if large_ntfs and size > NTFS_LARGE_LIMIT:
             raise ValueError("NTFS artifact exceeds the 8 GiB member limit")
-        if item["kind"] == "registry_hive":
+        if item["kind"] == "registry_hive_log":
+            from triage_engine.registry_hive_artifacts import max_hive_bytes
+            if not isinstance(item.get("hive_member"), str) or item.get("log_slot") not in {"LOG1", "LOG2"}:
+                raise ValueError("Registry hive log member requires hive_member and log_slot LOG1 or LOG2")
+            hive_total += size
+            if size > max_hive_bytes() or hive_total > MAX_HIVE_BUNDLE_BYTES:
+                raise ValueError("Registry hive byte budget exceeded")
+        elif item["kind"] == "registry_hive":
             from triage_engine.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
             if item.get("hive_type") not in HIVE_TYPES:
                 raise ValueError("Registry hive member requires hive_type ntuser, software, system or amcache")
@@ -248,10 +255,15 @@ def read_forensic_bundle(
                 alert = _configuration_alert(observation)
                 if alert is not None:
                     alerts.append(alert)
+        elif item["kind"] == "registry_hive_log":
+            continue  # Replayed with the hive it names.
         elif item["kind"] == "registry_hive":
             from triage_engine.registry_hive_artifacts import parse_registry_hive
+            hive_logs = [log_bytes for _, _, _, log_bytes, log_item in verified
+                         if log_item["kind"] == "registry_hive_log" and log_item.get("hive_member") == item["path"]]
             parsed, warnings = parse_registry_hive(content_bytes, hive_type=item["hive_type"],
-                                                   original_name=str(item.get("original_name", "")), **context)
+                                                   original_name=str(item.get("original_name", "")),
+                                                   logs=hive_logs, **context)
             observations.extend(parsed)
             adapter_warnings.extend(warnings)
             alerts.extend(alert for alert in map(_configuration_alert, parsed) if alert is not None)

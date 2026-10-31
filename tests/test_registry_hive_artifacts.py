@@ -256,7 +256,7 @@ def test_ri_index_lists_are_followed():
 
 def test_dirty_hive_is_parsed_with_an_explicit_no_replay_warning():
     observations, warnings = parse(hive_bytes(software_spec(), sequences=(8, 7))[0])
-    assert observations and any("dirty" in warning and "not replayed" in warning for warning in warnings)
+    assert observations and any("dirty" in warning and "no transaction logs were supplied" in warning for warning in warnings)
 
 
 def test_bad_checksum_is_a_warning():
@@ -384,10 +384,14 @@ def test_packaged_hives_are_retained_typed_and_flag_suspicious_run_values(tmp_pa
     bundle = pack_artifacts(tmp_path / "bundle", host="WS-LAB-01", observed_at="2026-10-02T12:00:00Z",
                             registry_hives=[(software, "software"), (system, "system")])
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
-    assert [(item["kind"], item["hive_type"], item["path"]) for item in manifest["files"]] == [
-        ("registry_hive", "software", "registry_hive-1.hive"), ("registry_hive", "system", "registry_hive-2.hive")]
+    assert [(item["kind"], item.get("hive_type"), item["path"]) for item in manifest["files"]] == [
+        ("registry_hive", "software", "registry_hive-1.hive"), ("registry_hive", "system", "registry_hive-2.hive"),
+        ("registry_hive_log", None, "registry_hive_log-1.log1")]
+    assert manifest["files"][2]["hive_member"] == "registry_hive-2.hive"
     assert manifest["completeness"] == "partial"
-    assert any("SYSTEM" in warning and "not packaged or replayed" in warning for warning in manifest["warnings"])
+    # SYSTEM's log travels with it; SOFTWARE has none, which is stated.
+    assert any("SOFTWARE" in warning and "No transaction logs" in warning for warning in manifest["warnings"])
+    assert not any("SYSTEM" in warning and "transaction logs" in warning.lower() for warning in manifest["warnings"])
     assert (bundle / "registry_hive-1.hive").read_bytes() == software.read_bytes()
     result = read_forensic_bundle(str(bundle), temp_dir=tmp_path)
     kinds = sorted(observation["kind"] for observation in result.observations)

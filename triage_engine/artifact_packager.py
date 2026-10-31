@@ -145,6 +145,7 @@ def pack_artifacts(
             data = _stable_bytes(source)
             requested.append((kind, extension, source, data))
     hive_types: dict[int, str] = {}
+    hive_logs: dict[int, tuple[int, str]] = {}  # log position -> (hive position, LOG1/LOG2)
     if registry_hives:
         from triage_engine.forensic_artifacts import MAX_HIVE_BUNDLE_BYTES
         from triage_engine.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
@@ -162,11 +163,21 @@ def pack_artifacts(
             if not data.startswith(b"regf"):
                 raise ValueError(f"Not a registry hive (missing regf signature): {source.name}")
             hive_types[len(requested)] = hive_type
+            hive_index = len(requested)
             requested.append(("registry_hive", ".hive", source, data))
+            for slot in ("LOG1", "LOG2"):
+                log_source = Path(str(source) + "." + slot)
+                if log_source.is_file() and not _is_link(log_source):
+                    log_data = _stable_bytes(log_source, max_hive_bytes())
+                    hive_total += len(log_data)
+                    if hive_total > MAX_HIVE_BUNDLE_BYTES:
+                        raise ValueError("Registry hive inputs exceed the 1 GiB aggregate limit")
+                    hive_logs[len(requested)] = (hive_index, slot)
+                    requested.append(("registry_hive_log", "." + slot.lower(), log_source, log_data))
     # Every supported member kind is now parsed (including native .pf), and at
     # least one member is required above, so no separate analytical check.
     if sum(len(data) for kind, _, _, data in requested
-          if kind != "registry_hive" and data is not None) > _LIMIT:
+          if kind not in {"registry_hive", "registry_hive_log"} and data is not None) > _LIMIT:
         raise ValueError("Artifact inputs exceed the 64 MiB aggregate limit")
     for kind, _, source, data in requested:
         if kind == "chromium_history":
@@ -215,6 +226,9 @@ def pack_artifacts(
                 item["exporter"] = {"name": "PECmd", "version": pecmd_version}
             if kind == "registry_hive":
                 item["hive_type"] = hive_types[position]
+            if kind == "registry_hive_log":
+                hive_position, slot = hive_logs[position]
+                item["hive_member"], item["log_slot"] = entries[hive_position]["path"], slot
             entries.append(item)
         warnings = ([] if not persistence_records else [
             "Persistence records supplied without their acquisition manifest; collector scope and failures are unknown."])
@@ -224,11 +238,11 @@ def pack_artifacts(
         if registry_hives:
             # A selected hive is not the whole registry: other users' NTUSER.DAT files may exist.
             warnings.append("Registry hives were selected individually; other hives, including other users' NTUSER.DAT, may exist.")
-            logs = sorted({source.name for kind, _, source, _ in requested if kind == "registry_hive"
-                           and any(Path(str(source) + suffix).exists() for suffix in (".LOG1", ".LOG2"))})
-            if logs:
-                warnings.append("Transaction logs found beside " + ", ".join(logs)
-                                + " were not packaged or replayed; changes held only in those logs are missing.")
+            unlogged = sorted(source.name for position, (kind, _, source, _) in enumerate(requested)
+                              if kind == "registry_hive" and not any(hive == position for hive, _ in hive_logs.values()))
+            if unlogged:
+                warnings.append("No transaction logs were found beside " + ", ".join(unlogged)
+                                + "; if those hives were copied from a running system, recent changes may be missing.")
         manifest = {"schema_version": "1.1", "kind": "windows_forensic_artifacts",
                     "host": host, "observed_at": observed_at,
                     "collector": {"name": "triage-artifact-packager", "version": __version__},

@@ -83,7 +83,7 @@ def capture_evidence(case_path: str, files: Iterable[tuple[str, str]]) -> list[d
     total = 0
     for source, kind in sources:
         if kind not in {"evtx", "artifact_manifest", "persistence_records", "chromium_history", "pecmd_jsonl", "prefetch_source",
-                        "scheduled_task_xml", "registry_hive", "ntfs_mft", "ntfs_usn_journal"}:
+                        "scheduled_task_xml", "registry_hive", "registry_hive_log", "ntfs_mft", "ntfs_usn_journal"}:
             raise ValueError("Unsupported evidence source kind")
         if is_link_or_reparse(source) or not source.is_file():
             raise ValueError(f"Evidence input must be a regular file: {source.name}")
@@ -115,7 +115,7 @@ def capture_evidence(case_path: str, files: Iterable[tuple[str, str]]) -> list[d
                 raise ValueError(f"Evidence changed during acquisition: {source.name}")
             checksum = digest.hexdigest()
             extension = {"evtx": ".evtx", "chromium_history": ".sqlite", "pecmd_jsonl": ".jsonl", "prefetch_source": ".pf",
-                         "scheduled_task_xml": ".xml", "registry_hive": ".hive", "ntfs_mft": ".mft",
+                         "scheduled_task_xml": ".xml", "registry_hive": ".hive", "registry_hive_log": ".hivelog", "ntfs_mft": ".mft",
                          "ntfs_usn_journal": ".usnjrnl"}.get(kind, ".json")
             destination = _contained(evidence_root / (checksum + extension), root)
             if destination.exists():

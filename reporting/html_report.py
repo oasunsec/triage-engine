@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
@@ -54,7 +55,12 @@ def _graph_library_tag() -> str:
         return "<!-- Graph library not bundled; the entity graph tab explains this. -->"
     if "</script" in code.lower():
         raise ValueError("Bundled graph library cannot be inlined safely")
-    return "<script>/* cytoscape 3.34.3, MIT */\n" + code + "</script>"
+    # Escape non-ASCII so the report decodes under any default encoding; \u escapes are
+    # equivalent in JavaScript strings, regular expressions and identifiers.
+    ascii_code = "".join(char if ord(char) < 128 else "".join(
+        f"\\u{unit:04x}" for unit in struct.unpack(f"<{len(char.encode('utf-16-le')) // 2}H", char.encode("utf-16-le")))
+        for char in code)
+    return "<script>/* cytoscape 3.34.3, MIT */\n" + ascii_code + "</script>"
 
 
 

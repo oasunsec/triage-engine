@@ -492,16 +492,31 @@ def _amcache(builder: _Builder) -> None:
 
 def parse_registry_hive(content: bytes, *, hive_type: str, source_name: str, source_sha256: str, host: str,
                         observed_at: str, collector: dict, original_name: str = "",
-                        max_bytes: int | None = None) -> tuple[list[dict], list[str]]:
-    """Return (observations, warnings) for one offline hive of a declared type."""
+                        max_bytes: int | None = None, logs: list[bytes] | None = None) -> tuple[list[dict], list[str]]:
+    """Return (observations, warnings) for one offline hive of a declared type.
+
+    ``logs`` are the hive's .LOG1/.LOG2 bytes; verified entries are replayed onto a
+    copy of the hive before parsing (``registry_log_replay``).
+    """
     if hive_type not in HIVE_TYPES:
         raise ValueError(f"Unsupported hive type {hive_type!r}")
+    replay_report = None
+    if logs:
+        from triage_engine.registry_log_replay import replay
+        content, replay_report = replay(content, logs)
     hive = Hive(content, max_bytes=max_bytes)
     builder = _Builder(hive, hive_type=hive_type, source_name=source_name, source_sha256=source_sha256, host=host,
                        observed_at=observed_at, collector=collector, original_name=original_name)
-    if hive.dirty:
-        builder.warn("Hive is dirty (primary and secondary sequence numbers differ). Transaction logs are not "
-                     "replayed in this version, so changes held only in .LOG1/.LOG2 are missing.")
+    if replay_report and replay_report["entries_applied"]:
+        builder.warn(f"Replayed {replay_report['entries_applied']} verified transaction-log entries "
+                     f"(sequence {replay_report['first_applied']}-{replay_report['last_applied']}) onto a copy of the hive; "
+                     "the supplied hive file is unchanged.")
+    elif replay_report and replay_report["dirty"]:
+        builder.warn("Hive is dirty and its transaction logs hold no verified entry continuing from the hive's "
+                     "sequence number, so changes held only in the logs may be missing.")
+    elif hive.dirty:
+        builder.warn("Hive is dirty (primary and secondary sequence numbers differ) and no transaction logs were "
+                     "supplied, so changes held only in .LOG1/.LOG2 are missing.")
     if not hive.checksum_valid:
         builder.warn("Hive base block checksum does not match")
     root = hive.key(hive.root)
