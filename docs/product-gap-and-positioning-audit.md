@@ -1,5 +1,7 @@
 # Triage Engine Product Gap and Positioning Audit
 
+> **Superseded (2026-10-31).** This audit is kept as a record. The MSP direction it recommends was dropped: client profiles, webhooks, licensing editions and AI summaries were removed. The tool now focuses on responders investigating a Windows machine. See the changelog.
+
 Date: 2026-08-26  
 Scope: repository implementation, packaged Windows build, supplied `EVTX Sample` corpus, current dashboard flow, and comparable tools.
 
