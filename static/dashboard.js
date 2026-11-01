@@ -1669,7 +1669,7 @@ async function openCase(name, options = {}) {
       stat(sm.finding_count || 0, 'Findings', '--orange') +
       stat(sm.incident_count || 0, 'Incidents', '--red');
 
-    const tabs = ['Overview', 'Incidents', 'Findings', 'Timeline', ...(cs.forensic_summary ? ['Evidence'] : []), 'Summary', 'Brief'];
+    const tabs = ['Overview', 'Incidents', 'Findings', 'Timeline', 'Evidence', 'Summary', 'Brief'];
     document.getElementById('detail-tabs').innerHTML = tabs.map((t,i) => {
       const tabName = t.toLowerCase();
       const isActive = _detailTarget.tab ? _detailTarget.tab === tabName : i === 0;
