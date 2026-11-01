@@ -731,7 +731,7 @@ function renderLiveHealth() {
   const readinessLabel = formatLiveHealthState(readiness === 'ready' ? 'ready' : readiness);
   const guidance = Array.isArray(liveHealthState.guidance) ? liveHealthState.guidance : [];
   const channels = Array.isArray(liveHealthState.channels) ? liveHealthState.channels : [];
-  hint.innerHTML = `Server readiness: <span class="${readinessLabel.cls}">${esc(readinessLabel.label)}</span>${liveHealthState.is_elevated ? ' · elevated server session' : ' · standard privileges'}`;
+  hint.innerHTML = `Server readiness: <span class="${readinessLabel.cls}">${esc(readinessLabel.label)}</span>${liveHealthState.is_elevated ? ' · elevated: Prefetch, scheduled tasks and registry hives are copied too' : ' · standard privileges: event logs only, no artifacts'}`;
   body.innerHTML = `
     <div class="live-health-grid">
       <div class="mini-stat">

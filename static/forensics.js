@@ -81,7 +81,7 @@ async function loadForensicEvidence(name) {
 function renderNoArtifacts() {
   return `<section class="card"><div class="section-heading"><div><div class="eyebrow">FORENSIC ARTIFACTS</div><h2>This case has event logs only</h2></div></div>
     <p>The findings in this case come from Windows event logs. No artifacts were collected with them (Prefetch, registry hives, scheduled tasks, <code>$MFT</code>, USN journal), so there is nothing to show here yet: no file-system records, no executable inventory, and no links that confirm an event against an artifact.</p>
-    <p class="scope-note">Live scans and EVTX uploads read event logs only. To add artifacts, collect the machine from an elevated PowerShell. This makes a new case with both event logs and artifacts:</p>
+    <p class="scope-note">EVTX uploads contain event logs only. A live scan copies Prefetch, scheduled tasks and registry hives only when the server runs as administrator. Otherwise, collect the machine from an elevated PowerShell. This makes a new case with both event logs and artifacts, including <code>$MFT</code> and the USN journal:</p>
     <pre>.\\scripts\\collect-windows-evidence.ps1 -OutputDirectory D:\\triage\\${esc(document.getElementById('detail-case-name')?.textContent || 'host')}</pre>
     <p class="scope-note">Add <code>-ServerUrl</code> and <code>-IngestToken</code> to send it straight to this server (an admin creates tokens under User access), or start a new investigation with the collected <code>bundle</code> folder.</p></section>`;
 }

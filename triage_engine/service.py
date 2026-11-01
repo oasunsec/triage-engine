@@ -21,6 +21,8 @@ import logging
 import os
 import sys
 import traceback
+import shutil
+import socket
 import uuid
 from pathlib import Path
 from collections import Counter, defaultdict
@@ -129,6 +131,8 @@ class InvestigationRequest:
     # Live-mode settings
     channels: Optional[List[str]] = None
     since_minutes: Optional[int] = None
+    # Elevated live scans also copy Prefetch, tasks and hives from this machine.
+    collect_live_artifacts: bool = False
 
     # Sigma
     enable_sigma: bool = False
@@ -1810,6 +1814,7 @@ def run_investigation(
     _flush_stage_timing("init")
 
     stage = "init"
+    live_staging = None
     try:
         identity = case_identity(case_path)
         rpt.on_metadata("case_id", identity["case_id"])
@@ -1819,6 +1824,19 @@ def run_investigation(
                         "run_id": run_id, "sources": public_sources(sources), "original_sources_redacted": False})
         publish_sources()
         bundle_path = request.artifact_bundle or (request.input_source if request.input_mode == "artifact_bundle" else None)
+        if request.input_mode == "live" and request.collect_live_artifacts and not bundle_path:
+            from triage_engine.live_artifacts import collect_live_artifacts, is_elevated
+            if is_elevated():
+                rpt.on_stage("acquire", "Copying Prefetch, scheduled tasks and registry hives from this computer")
+                live_staging = Path(case_path) / f".live-artifacts-{run_id[:8]}"
+                bundle_path, live_steps = collect_live_artifacts(
+                    live_staging, host=socket.gethostname(), observed_at=datetime.now(timezone.utc).isoformat())
+                rpt.on_metadata("live_artifact_steps", live_steps)
+                collection_warnings.extend(f"Live artifact step {step['step']} {step['status']}: {step['error']}"
+                                           for step in live_steps if step["status"] != "ok")
+            else:
+                collection_warnings.append("Artifacts were not collected: the server is not running as administrator, "
+                                           "so Prefetch, registry hives and scheduled tasks could not be read.")
         if bundle_path:
             rpt.on_stage("acquire", "Verifying and retaining forensic artifact sources")
             artifact_sources = []
@@ -2561,3 +2579,7 @@ def run_investigation(
         )
         rpt.on_failed(stage, str(exc), traceback.format_exc())
         raise
+    finally:
+        if live_staging is not None:
+            # Copies are retained in the case's evidence folder; the staging copy is disposable.
+            shutil.rmtree(live_staging, ignore_errors=True)

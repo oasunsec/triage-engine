@@ -1411,6 +1411,7 @@ class LiveInvestigateRequest(BaseModel):
     channels: List[str] = []
     acquisition_method: str = "local_live"
     collection_manifest: Optional[Dict[str, Any]] = None
+    collect_artifacts: bool = True  # Prefetch, tasks and hives when the server is elevated
 
 
 class CaseMetadataPatchRequest(BaseModel):
@@ -3691,6 +3692,7 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
         requested_by=actor["username"],
         acquisition_method=acquisition_method,
         collection_manifest=manifest,
+        collect_live_artifacts=bool(body.collect_artifacts),
     )
 
     from triage_engine.case_utils import auto_case_name as _auto_name

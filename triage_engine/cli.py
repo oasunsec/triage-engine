@@ -233,6 +233,7 @@ def cmd_investigate(args: argparse.Namespace) -> int:
         collection_manifest=json.loads(args.collection_manifest) if getattr(args, "collection_manifest", "") else None,
         artifact_bundle=getattr(args, "artifacts", None),
         allow_large_ntfs=getattr(args, "allow_large_ntfs", False),
+        collect_live_artifacts=input_mode == "live" and not getattr(args, "no_live_artifacts", False),
     )
 
     reporter = _ConsoleReporter(use_color=use_color)
@@ -500,6 +501,8 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument("--allow-large-ntfs", action="store_true", help="Accept bundle $MFT/$J members above 64 MiB (up to 8 GiB each)")
     inv.add_argument("--channels", default=DEFAULT_LIVE_CHANNELS, help="Live channels (comma-separated)")
     inv.add_argument("--since", default="30m", help="Lookback for live mode (e.g., 30m, 2h, 1d)")
+    inv.add_argument("--no-live-artifacts", action="store_true",
+                     help="Live mode: skip copying Prefetch, scheduled tasks and registry hives (copied when elevated)")
     inv.add_argument("--start", help="Start date YYYY-MM-DD")
     inv.add_argument("--end", help="End date YYYY-MM-DD")
     inv.add_argument("--case", help="Case name (auto-generated when omitted)")
