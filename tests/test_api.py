@@ -1219,6 +1219,11 @@ class AuthAPITests(unittest.TestCase):
         self.assertEqual(attempts[-1].status_code, 429)
         self.assertIn("Retry-After", attempts[-1].headers)
 
+    def test_signed_in_reads_have_room_for_fast_case_review(self):
+        self._bootstrap()
+        reads = [self.client.get("/api/cases") for _ in range(150)]
+        self.assertTrue(all(resp.status_code == 200 for resp in reads))
+
     def test_login_rate_limit_counter_resets_after_window(self):
         import server
 
@@ -2227,6 +2232,7 @@ class StoreMigrationTests(unittest.TestCase):
                         "auth_store:001_initial_schema",
                         "auth_store:002_add_missing_columns",
                         "auth_store:003_session_activity_columns",
+                        "auth_store:004_ingest_tokens",
                     ],
                 )
         finally:

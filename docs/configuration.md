@@ -20,6 +20,8 @@ precedence. These files are ignored by Git; never copy their secret values into
 | `TRIAGE_UPLOAD_DIR` | `./uploads` (packaged Windows: data directory's `uploads/`) | Temporary upload staging. Compose sets `/app/data/uploads` so it shares the writable data mount. |
 | `TRIAGE_MAX_UPLOAD_MB` | `500` | Maximum upload size per EVTX file (MiB). |
 | `TRIAGE_MAX_AGGREGATE_UPLOAD_MB` | `TRIAGE_MAX_UPLOAD_MB` | Maximum total size for one upload request (MiB). |
+| `TRIAGE_MAX_INGEST_MB` | `12288` | Maximum size of one collector archive sent to `POST /api/ingest/collection` (MiB). See [collector-ingest.md](collector-ingest.md). |
+| `TRIAGE_API_READ_LIMIT_PER_MINUTE` | `600` | API reads allowed per signed-in user per minute (writes: 120; anonymous: 60). |
 | `TRIAGE_MAX_CONCURRENT_JOBS` | `2` | Maximum investigations executing concurrently. |
 | `TRIAGE_MAX_QUEUED_JOBS` | `8` | Additional investigations admitted to the bounded queue. |
 | `TRIAGE_ALLOWED_PATH_ROOTS` | unset | Absolute evidence roots for local-path investigations; required when `TRIAGE_HOST` is not localhost. |

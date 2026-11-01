@@ -28,6 +28,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import socket
 import sqlite3
 import subprocess
@@ -35,6 +36,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from sqlite3 import IntegrityError
 from threading import BoundedSemaphore, Lock, Thread
 from typing import Any, Dict, List, Optional
@@ -61,7 +63,9 @@ import uvicorn
 from triage_engine import __version__
 from triage_engine.case_utils import resolve_case_path
 from triage_engine.export_sanitizer import apply_demo_redaction_data, apply_demo_redaction_text
-from triage_engine.forensic_api import build_forensics_router
+from triage_engine.forensic_api import _JSON_CACHE as _FORENSIC_JSON_CACHE, build_forensics_router
+from triage_engine.ingest import IngestError, extract_collection
+from triage_engine.auth_store import create_ingest_token, list_ingest_tokens, revoke_ingest_token, verify_ingest_token
 from triage_engine.logging_config import configure_logging
 from parser.live_reader import classify_live_channel_error
 from triage_engine.service import InvestigationRequest, ProgressReporter, run_investigation
@@ -226,6 +230,8 @@ os.makedirs(UPLOAD_ROOT, exist_ok=True)
 # Max upload size per file: configurable via TRIAGE_MAX_UPLOAD_MB (default 500 MB)
 MAX_UPLOAD_MB = _env_int("TRIAGE_MAX_UPLOAD_MB", default=DEFAULT_MAX_UPLOAD_MB, minimum=1)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+# Collector archives carry $MFT copies of several GiB; TRIAGE_MAX_INGEST_MB caps one upload.
+MAX_INGEST_BYTES = _env_int("TRIAGE_MAX_INGEST_MB", default=12288, minimum=1) * 1024 * 1024
 # The aggregate limit protects disk and request handling when many individually
 # valid files are submitted in a single investigation request.
 MAX_AGGREGATE_UPLOAD_MB = _env_int(
@@ -245,6 +251,7 @@ CSRF_HEADER = "X-CSRF-Token"
 CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/bootstrap"}
 STATE_CHANGING_METHODS = {"POST", "PATCH", "DELETE"}
 RATE_LIMIT_WINDOW_SECONDS = 60
+API_READ_LIMIT_PER_MINUTE = _env_int("TRIAGE_API_READ_LIMIT_PER_MINUTE", default=600, minimum=60)
 _CSRF_SECRET = os.environ.get("TRIAGE_CSRF_SECRET", "").strip() or secrets.token_urlsafe(32)
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"']+")
 _RATE_LIMIT_BUCKETS: Dict[str, deque[float]] = {}
@@ -478,9 +485,15 @@ async def _rate_limit_result(
         # use a bounded but higher bucket for status reads only.
         identity = (user or {}).get("username") or ip
         checks.append((f"job-status:{identity}", 300, "Rate limit exceeded for job status polling"))
+    elif method == "POST" and path == "/api/ingest/collection":
+        checks.append((f"ingest:{ip}", 30, "Too many collector uploads from this address"))
+    elif user and method == "GET":
+        # Opening one case issues several reads per tab; a reviewer moving quickly
+        # through cases must not be throttled into half-rendered screens.
+        checks.append((f"api-read:{user['username']}", API_READ_LIMIT_PER_MINUTE, "Rate limit exceeded"))
     else:
         identity = (user or {}).get("username") or ip
-        checks.append((f"api:{identity}", 60, "Rate limit exceeded"))
+        checks.append((f"api:{identity}", 120 if user else 60, "Rate limit exceeded"))
 
     for key, limit, message in checks:
         allowed, retry_after = _consume_rate_limit(key, limit=limit, now=now)
@@ -1417,6 +1430,10 @@ class CaseMetadataResponse(BaseModel):
 
 class PurgeCaseResponse(BaseModel):
     purged: str
+
+
+class IngestTokenCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
 
 
 class JobDeleteRequest(BaseModel):
@@ -3257,6 +3274,37 @@ async def get_brief(case_name: str, request: Request):
     return payload
 
 
+def _remove_case_tree(case_path: str) -> None:
+    """Delete a case folder or raise 409 naming what is still there.
+
+    Windows refuses to delete files another program holds open (a viewer, an
+    antivirus scan of a large evidence copy). Silent failure used to report
+    success and leave a half-deleted case, so removal is retried, then verified.
+    """
+    def clear_readonly(function, path, _excinfo):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            function(path)
+        except OSError:
+            pass  # Verified below.
+
+    for attempt in range(3):
+        if not os.path.exists(case_path):
+            break
+        shutil.rmtree(case_path, onerror=clear_readonly)
+        if os.path.exists(case_path):
+            time.sleep(0.5 * (attempt + 1))
+    if os.path.exists(case_path):
+        left = [os.path.relpath(os.path.join(folder, name), case_path)
+                for folder, _, files in os.walk(case_path) for name in files]
+        shown = ", ".join(sorted(left)[:5]) + (f" and {len(left) - 5} more" if len(left) > 5 else "")
+        raise HTTPException(409, f"Case was not fully deleted: {len(left)} file(s) are in use or protected ({shown}). "
+                                 "Close any program using them and delete again; review state was kept.")
+    for cache in (_TIMELINE_CACHE, _FORENSIC_JSON_CACHE):
+        for key in [key for key in cache if os.path.normcase(key).startswith(os.path.normcase(case_path))]:
+            cache.pop(key, None)
+
+
 @app.delete(
     "/api/cases/{case_name}/purge",
     tags=["Cases"],
@@ -3283,7 +3331,7 @@ async def purge_expired_case(case_name: str, request: Request):
         raise HTTPException(409, "Case retention metadata is invalid; refusing purge")
     if retention_until > datetime.now(timezone.utc):
         raise HTTPException(409, "Case retention period has not elapsed")
-    shutil.rmtree(case_path, ignore_errors=True)
+    _remove_case_tree(case_path)
     delete_case_review_state(resolved_name)
     try:
         _product_store().purge_case_metadata(resolved_name)
@@ -3314,8 +3362,12 @@ async def delete_case(case_name: str, request: Request):
     except FileNotFoundError:
         raise HTTPException(404, f"Case not found: {case_name}")
     resolved_name = os.path.basename(case_path)
-    shutil.rmtree(case_path, ignore_errors=True)
+    _remove_case_tree(case_path)
     delete_case_review_state(resolved_name)
+    try:
+        _product_store().purge_case_metadata(resolved_name)
+    except (OSError, sqlite3.Error):
+        SERVER_LOGGER.warning("case_metadata_purge_failed", extra={"case_name": resolved_name}, exc_info=True)
     record_audit_event(
         actor_username=actor["username"],
         action="delete_case",
@@ -3323,6 +3375,103 @@ async def delete_case(case_name: str, request: Request):
         details={"case_name": resolved_name},
     )
     return {"deleted": resolved_name}
+
+
+# ---------------------------------------------------------------------------
+# API: Collector ingest
+# ---------------------------------------------------------------------------
+@app.post("/api/ingest-tokens", tags=["Ingest"], summary="Create Ingest Token")
+async def create_ingest_token_endpoint(request: Request, body: IngestTokenCreateRequest):
+    """Create a collector token. The token is returned once; only its hash is stored."""
+    actor = _require_user(request, ("admin",))
+    try:
+        created = create_ingest_token(body.name, actor["username"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    record_audit_event(actor_username=actor["username"], action="create_ingest_token",
+                       details={"token_id": created["token_id"], "name": created["name"]})
+    return created
+
+
+@app.get("/api/ingest-tokens", tags=["Ingest"], summary="List Ingest Tokens")
+async def list_ingest_tokens_endpoint(request: Request):
+    _require_user(request, ("admin",))
+    return {"tokens": list_ingest_tokens()}
+
+
+@app.delete("/api/ingest-tokens/{token_id}", tags=["Ingest"], summary="Revoke Ingest Token")
+async def revoke_ingest_token_endpoint(token_id: str, request: Request):
+    actor = _require_user(request, ("admin",))
+    if not revoke_ingest_token(token_id):
+        raise HTTPException(404, "Ingest token not found or already revoked")
+    record_audit_event(actor_username=actor["username"], action="revoke_ingest_token", details={"token_id": token_id})
+    return {"revoked": token_id}
+
+
+@app.post("/api/ingest/collection", tags=["Ingest"], summary="Ingest Collector Archive",
+          description="Accept a zipped scripts/collect-windows-evidence.ps1 output with an ingest token, verify every "
+                      "listed hash, and queue an investigation of its event logs and artifact bundle.")
+async def ingest_collection(request: Request, case_name: Optional[str] = Query(None)):
+    authorization = request.headers.get("Authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    issuer = verify_ingest_token(token)
+    if not issuer:
+        raise HTTPException(401, "A valid ingest token is required")
+    case_name = _validate_case_name(case_name)
+    job_id = uuid.uuid4().hex[:12]
+    work = os.path.join(UPLOAD_ROOT, f"ingest-{job_id}")
+    os.makedirs(work, exist_ok=False)
+    archive = os.path.join(work, "collection.zip")
+    received = 0
+    try:
+        with open(archive, "xb") as out:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_INGEST_BYTES:
+                    raise HTTPException(413, f"Collection exceeds the {MAX_INGEST_BYTES} byte ingest limit")
+                out.write(chunk)
+        if not received:
+            raise HTTPException(400, "Empty upload")
+        summary = await asyncio.to_thread(extract_collection, Path(archive), Path(work) / "collection",
+                                          max_bytes=MAX_INGEST_BYTES * 4)
+        os.remove(archive)
+    except IngestError as exc:
+        shutil.rmtree(work, ignore_errors=True)  # Disposable staging, not case evidence.
+        raise HTTPException(400, f"Collection rejected: {exc}")
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    host = re.sub(r"[^A-Za-z0-9_.-]", "-", summary["host"] or "host")[:60]
+    resolved_name = case_name or f"{host}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    investigation_request = InvestigationRequest(
+        input_source=summary["logs"] or summary["bundle"],
+        input_mode="evtx_path" if summary["logs"] else "artifact_bundle",
+        artifact_bundle=summary["bundle"] or None,
+        case_name=resolved_name,
+        cases_dir=CASES_ROOT,
+        request_id=_request_id_for_log(request),
+        requested_by=f"ingest:{issuer['name']}",
+        acquisition_method="portable_collector",
+        collection_manifest=CollectionManifest(
+            method="portable_collector", source_host=summary["host"],
+            collected_at=summary["collected_at"] or datetime.now(timezone.utc).isoformat(),
+            failures=summary["failed_steps"], tool_version="collect-windows-evidence.ps1", files=summary["files"],
+        ).to_dict(),
+        allow_large_ntfs=True,
+    )
+    create_job(job_id, case_name=resolved_name)
+    record_audit_event(actor_username=f"ingest:{issuer['name']}", action="ingest_collection", target_username=resolved_name,
+                       details={"job_id": job_id, "token_id": issuer["token_id"], "host": summary["host"],
+                                "bytes": received, "files_verified": summary["files_verified"],
+                                "failed_collection_steps": len(summary["failed_steps"])})
+    try:
+        _submit_investigation_job(job_id, investigation_request, work)
+    except HTTPException:
+        delete_job(job_id)
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    return {"job_id": job_id, "case_name": resolved_name, "status": "queued",
+            "files_verified": summary["files_verified"], "failed_collection_steps": summary["failed_steps"]}
 
 
 # ---------------------------------------------------------------------------

@@ -347,7 +347,7 @@
               <div style="display:flex;gap:8px;align-items:flex-end">
                 <button class="btn btn-sm btn-ghost" onclick="toggleVisibleJobsSelection(true)">Select Visible</button>
                 <button class="btn btn-sm btn-ghost" onclick="clearSelectedJobs()">Clear Selection</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteSelectedJobs()" id="jobs-delete-selected" disabled>Delete Selected</button>
+                <button class="btn btn-sm btn-ghost" onclick="deleteSelectedJobs()" id="jobs-delete-selected" disabled title="Removes the job records only. Cases and their evidence are kept; delete a case from its own page.">Remove from job history</button>
               </div>
             </div>
             <div class="toolbar-meta" id="jobs-meta"></div>
@@ -451,6 +451,16 @@
         </div>
       </div>
       <div class="card" style="margin:0">
+        <div class="card-title">Collector Tokens</div>
+        <div class="section-kicker">Let <code>scripts/collect-windows-evidence.ps1 -ServerUrl … -IngestToken …</code> upload a collection; the server re-checks every hash and opens the case.</div>
+        <div class="auth-actions">
+          <input class="input" id="new-ingest-token-name" placeholder="Token name, e.g. finance laptops" maxlength="80" aria-label="Collector token name">
+          <button class="btn btn-primary" onclick="createIngestToken()">Create Token</button>
+        </div>
+        <div class="auth-message" id="ingest-token-message" role="status"></div>
+        <div class="users-list" id="ingest-token-list"><div class="loading-state">Loading tokens...</div></div>
+      </div>
+      <div class="card" style="margin:0">
         <div class="card-title">Admin Audit</div>
         <div class="section-kicker">Recent user-management and access events</div>
         <div class="audit-toolbar">
@@ -464,6 +474,9 @@
               <option value="create_user">Create user</option>
               <option value="update_user">Update user</option>
               <option value="change_password">Change password</option>
+              <option value="create_ingest_token">Create collector token</option>
+              <option value="revoke_ingest_token">Revoke collector token</option>
+              <option value="ingest_collection">Collector upload</option>
             </select>
           </div>
           <div class="input-group">

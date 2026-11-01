@@ -445,6 +445,7 @@ function openUserAdmin() {
   }
   document.getElementById('user-admin-modal')?.classList.remove('hidden');
   loadUsers();
+  loadIngestTokens();
   loadAuditEvents();
 }
 
@@ -523,7 +524,10 @@ async function apiJSON(path, options = {}) {
   const resp = await apiFetch(path, options);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    const err = new Error(data.detail || `Request failed (${resp.status})`);
+    const detail = Array.isArray(data.detail)
+      ? data.detail.map(item => `${(item.loc || []).filter(part => part !== 'body').join('.') || 'request'}: ${item.msg}`).join('; ')
+      : data.detail;
+    const err = new Error(detail || `Request failed (${resp.status})`);
     err.status = resp.status;
     err.payload = data;
     throw err;
@@ -1139,6 +1143,54 @@ async function loadUsers() {
   }
 }
 
+async function loadIngestTokens() {
+  const list = document.getElementById('ingest-token-list');
+  if (!list) return;
+  try {
+    const tokens = (await apiJSON('/api/ingest-tokens')).tokens || [];
+    list.innerHTML = tokens.length ? tokens.map(token => `
+      <div class="user-row">
+        <div class="user-meta">
+          <div class="user-name">${esc(token.name)}</div>
+          <div class="user-subtle">${token.revoked_at ? `Revoked ${esc(token.revoked_at.slice(0,16).replace('T',' '))}` : 'Active'} · Created by ${esc(token.created_by)} ${esc((token.created_at || '').slice(0,10))} · Used ${Number(token.use_count || 0)} time(s)${token.last_used_at ? `, last ${esc(token.last_used_at.slice(0,16).replace('T',' '))}` : ''}</div>
+        </div>
+        <div class="user-actions">${token.revoked_at ? '' : `<button class="btn btn-sm btn-ghost" onclick='revokeIngestToken(${jsv(token.token_id)}, ${jsv(token.name)})'>Revoke</button>`}</div>
+      </div>`).join('') : '<div class="empty-state">No collector tokens yet.</div>';
+  } catch (e) {
+    list.innerHTML = '<div class="empty-state">Failed to load collector tokens.</div>';
+  }
+}
+
+async function createIngestToken() {
+  const input = document.getElementById('new-ingest-token-name');
+  const message = document.getElementById('ingest-token-message');
+  const name = input?.value?.trim() || '';
+  if (!name) { message.textContent = 'Name the token after where it will be used.'; message.style.color = 'var(--red)'; return; }
+  try {
+    const created = await apiJSON('/api/ingest-tokens', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name }) });
+    input.value = '';
+    message.style.color = 'var(--text)';
+    message.innerHTML = `Copy this token now; it is not shown again:<br><code class="token-once">${esc(created.token)}</code>`;
+    loadIngestTokens();
+    loadAuditEvents();
+  } catch (e) {
+    message.textContent = e.message || 'Failed to create token.';
+    message.style.color = 'var(--red)';
+  }
+}
+
+async function revokeIngestToken(tokenId, name) {
+  if (!confirm(`Revoke collector token "${name}"? Collectors using it will be refused.`)) return;
+  try {
+    await apiJSON(`/api/ingest-tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE', headers: authHeaders() });
+    notify(`Revoked collector token ${name}.`, 'success');
+    loadIngestTokens();
+    loadAuditEvents();
+  } catch (e) {
+    notify(e.message || 'Failed to revoke token.', 'error');
+  }
+}
+
 async function createUser() {
   const username = document.getElementById('new-user-username')?.value?.trim() || '';
   const password = document.getElementById('new-user-password')?.value || '';
@@ -1584,7 +1636,7 @@ async function openCase(name, options = {}) {
   document.getElementById('detail-content').innerHTML = '<div class="card"><div class="loading-state"><span class="loading-inline"><span class="spinner" aria-hidden="true"></span><span>Loading case detail...</span></span></div></div>';
   document.getElementById('detail-report-link').href = API + '/api/cases/' + encodeURIComponent(name) + '/report';
   document.getElementById('detail-delete-btn').onclick = async () => {
-    if (confirm('Delete case ' + name + '?')) {
+    if (confirm(`Permanently delete case ${name}? This removes its evidence copies, report, findings and review decisions from this server. Original evidence elsewhere is not touched. This cannot be undone.`)) {
       try {
         await apiJSON('/api/cases/' + encodeURIComponent(name), { method:'DELETE' });
         notify(`Deleted case ${name}.`, 'success');
@@ -2469,6 +2521,7 @@ async function deleteSelectedJobs() {
     notify('Select one or more completed jobs first.', 'error');
     return;
   }
+  if (!confirm(`Remove ${ids.length} job record(s) from history? Their cases and evidence are kept.`)) return;
   try {
     const result = await apiJSON('/api/jobs/delete', {
       method: 'POST',
@@ -2481,8 +2534,8 @@ async function deleteSelectedJobs() {
     await loadJobs();
     notify(
       skippedCount
-        ? `Deleted ${deletedCount} job(s). Skipped ${skippedCount} active or missing job(s).`
-        : `Deleted ${deletedCount} job(s) from history.`,
+        ? `Removed ${deletedCount} job record(s). Skipped ${skippedCount} active or missing job(s).`
+        : `Removed ${deletedCount} job record(s) from history; their cases are unchanged.`,
       skippedCount ? 'info' : 'success'
     );
   } catch (e) {

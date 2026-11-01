@@ -109,6 +109,7 @@ def _init_db() -> None:
                 ("001_initial_schema", _migration_001_initial_schema),
                 ("002_add_missing_columns", _migration_002_add_missing_columns),
                 ("003_session_activity_columns", _migration_003_session_activity_columns),
+                ("004_ingest_tokens", _migration_004_ingest_tokens),
             ),
             namespace="auth_store",
         )
@@ -139,6 +140,66 @@ def _migration_002_add_missing_columns(con: sqlite3.Connection) -> None:
 def _migration_003_session_activity_columns(con: sqlite3.Connection) -> None:
     add_column_if_missing(con, table_name="sessions", column_name="last_active_at", column_sql="TEXT NOT NULL DEFAULT ''")
     add_column_if_missing(con, table_name="sessions", column_name="last_ip", column_sql="TEXT NOT NULL DEFAULT ''")
+
+
+def _migration_004_ingest_tokens(con: sqlite3.Connection) -> None:
+    con.executescript("""
+    CREATE TABLE IF NOT EXISTS ingest_tokens (
+      token_id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+      created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT NOT NULL DEFAULT '',
+      last_used_at TEXT NOT NULL DEFAULT '', use_count INTEGER NOT NULL DEFAULT 0
+    );
+    """)
+
+
+# Ingest tokens let collectors upload evidence without a user's password. Only a
+# SHA-256 of each token is stored; the token is shown once when created.
+INGEST_TOKEN_PREFIX = "tri_"
+
+
+def _ingest_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_ingest_token(name: str, created_by: str) -> Dict[str, Any]:
+    name = str(name or "").strip()[:80]
+    if not name:
+        raise ValueError("Ingest token name is required")
+    token_id = secrets.token_hex(6)
+    token = INGEST_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    now = _now()
+    with _conn() as con:
+        con.execute("INSERT INTO ingest_tokens (token_id, name, token_hash, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (token_id, name, _ingest_token_hash(token), created_by, now))
+    return {"token_id": token_id, "name": name, "token": token, "created_by": created_by, "created_at": now}
+
+
+def list_ingest_tokens() -> list[Dict[str, Any]]:
+    with _conn() as con:
+        rows = con.execute("SELECT token_id, name, created_by, created_at, revoked_at, last_used_at, use_count "
+                           "FROM ingest_tokens ORDER BY created_at DESC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def revoke_ingest_token(token_id: str) -> bool:
+    with _conn() as con:
+        cur = con.execute("UPDATE ingest_tokens SET revoked_at = ? WHERE token_id = ? AND revoked_at = ''", (_now(), token_id))
+    return cur.rowcount > 0
+
+
+def verify_ingest_token(token: str) -> Optional[Dict[str, Any]]:
+    """The active token record matching ``token``, recording its use; None otherwise."""
+    token = str(token or "").strip()
+    if not token.startswith(INGEST_TOKEN_PREFIX) or len(token) > 200:
+        return None
+    with _conn() as con:
+        row = con.execute("SELECT token_id, name, created_by, revoked_at FROM ingest_tokens WHERE token_hash = ?",
+                          (_ingest_token_hash(token),)).fetchone()
+        if not row or row["revoked_at"]:
+            return None
+        con.execute("UPDATE ingest_tokens SET last_used_at = ?, use_count = use_count + 1 WHERE token_id = ?",
+                    (_now(), row["token_id"]))
+    return {"token_id": row["token_id"], "name": row["name"], "created_by": row["created_by"]}
 
 
 _init_db()

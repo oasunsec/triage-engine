@@ -80,6 +80,37 @@ class CaseApiSafetyTests(unittest.TestCase):
         for method, path in (("get", "/api/clients"), ("post", "/api/clients"), ("get", "/api/capabilities")):
             self.assertIn(getattr(self.client, method)(path).status_code, (404, 405))
 
+    def test_delete_reports_files_it_could_not_remove_and_keeps_review_state(self):
+        import server
+        self._case("stuck-case")
+        with patch("server.delete_case_review_state") as review_cleanup, patch("server.shutil.rmtree"), \
+                patch("server.time.sleep"):
+            response = self.client.delete("/api/cases/stuck-case")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("findings.json", response.json()["detail"])
+        review_cleanup.assert_not_called()
+        self.assertTrue(os.path.isdir(os.path.join(self.cases, "stuck-case")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows refuses to delete open files")
+    def test_delete_with_a_file_open_elsewhere_is_not_reported_as_deleted(self):
+        path = self._case("open-file-case")
+        with open(os.path.join(path, "findings.json"), "rb"), patch("server.time.sleep"):
+            response = self.client.delete("/api/cases/open-file-case")
+        self.assertEqual(response.status_code, 409)
+        retry = self.client.delete("/api/cases/open-file-case")
+        self.assertEqual(retry.status_code, 200)
+        self.assertFalse(os.path.exists(path))
+
+    def test_delete_removes_folder_and_metadata(self):
+        import server
+        self._case("gone-case")
+        self.assertEqual(self.client.patch("/api/cases/gone-case/metadata", json={"acquisition_method": "upload"}).status_code, 200)
+        self.assertIsNotNone(server._product_store().get_case_metadata("gone-case"))
+        response = self.client.delete("/api/cases/gone-case")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(os.path.exists(os.path.join(self.cases, "gone-case")))
+        self.assertIsNone(server._product_store().get_case_metadata("gone-case"))
+
     def test_explicit_purge_requires_elapsed_retention(self):
         self._case("expired-case")
         past = (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0).isoformat()

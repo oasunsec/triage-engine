@@ -141,6 +141,20 @@ triage investigate --evtx /evidence/logs --artifacts runtime/output/host01-bundl
 
 Originals are hashed and kept. Each observation records its source file, record and what its timestamp means. See [forensic artifact intake](./docs/forensic-artifacts.md) and how the parsers were [checked on a real Windows 11 machine](./docs/real-evidence-validation.md).
 
+### Collect from a Windows machine
+
+From an elevated PowerShell on the machine under investigation, collect event logs, Prefetch,
+registry hives with their transaction logs, scheduled tasks, and the raw `$MFT`/`$J`. This only
+reads the system. The collector also writes a hashed manifest and an artifact bundle:
+
+```powershell
+.\scripts\collect-windows-evidence.ps1 -OutputDirectory D:\triage\host-01
+```
+
+Add `-ServerUrl https://your-triage-server -IngestToken tri_...` to send the collection straight to
+a triage server. The server re-checks every hash and opens the case. See
+[docs/collector-ingest.md](docs/collector-ingest.md).
+
 ## Case outputs
 
 - `report.html`

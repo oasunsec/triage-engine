@@ -6,7 +6,11 @@ param(
     [string]$Volume = 'C:',
     [int]$UsnCapMiB = 1024,
     [switch]$SkipNtfs,
-    [string]$Python = 'python'
+    [string]$Python = 'python',
+    # Optional: send the finished collection to a triage server (see docs/collector-ingest.md).
+    [string]$ServerUrl,
+    [string]$IngestToken,
+    [string]$CaseName
 )
 
 # Read-only collection of this machine's triage evidence into one folder, then a
@@ -19,6 +23,8 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) { throw 'Run this from an elevated (Administrator) PowerShell.' }
 if ($Volume -notmatch '^[A-Za-z]:$') { throw 'Volume must be a drive letter such as C:' }
+if ($ServerUrl -and -not $IngestToken) { throw 'IngestToken is required with ServerUrl.' }
+if ($ServerUrl -and $ServerUrl -notmatch '^https?://') { throw 'ServerUrl must start with http:// or https://' }
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\')
 $out = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\')
@@ -131,3 +137,7 @@ $failed = @($steps | Where-Object { $_.status -eq 'failed' })
 Write-Output "Collected $($files.Count) files into $out ($($failed.Count) step(s) failed; see collection_manifest.json)."
 Write-Output "Investigate with:"
 Write-Output "  python -m triage_engine.cli investigate --evtx `"$logs`" --artifacts `"$bundle`" --allow-large-ntfs"
+
+if ($ServerUrl) {
+    & (Join-Path $PSScriptRoot 'send-collection.ps1') -CollectionDirectory $out -ServerUrl $ServerUrl -IngestToken $IngestToken -CaseName $CaseName
+}

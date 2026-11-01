@@ -251,6 +251,10 @@ async function addForensicHypothesis() {
     target_observation_id: document.getElementById('hyp-target').value.trim(),
     claim: document.getElementById('hyp-claim').value.trim(),
   };
+  if (!body.source_observation_id || !body.target_observation_id || !body.claim) {
+    notify('Enter both observation ids (shown under each observation) and the claim.', 'error');
+    return;
+  }
   try {
     await apiJSON(`/api/cases/${encodeURIComponent(forensicCase)}/evidence-links/hypotheses`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     notify('Hypothesis recorded.', 'success');
