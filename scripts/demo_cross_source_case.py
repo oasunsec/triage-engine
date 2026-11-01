@@ -19,9 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from triage_engine import service  # noqa: E402
-from triage_engine.artifact_packager import pack_artifacts  # noqa: E402
-from triage_engine.product import export_case_bundle, verify_case_bundle  # noqa: E402
+from corrobora import service  # noqa: E402
+from corrobora.artifact_packager import pack_artifacts  # noqa: E402
+from corrobora.product import export_case_bundle, verify_case_bundle  # noqa: E402
 
 DEFAULT_EVTX = ROOT / "repo_cache" / "sbousseaden_EVTX-ATTACK-SAMPLES" / "Privilege Escalation" / \
     "sysmon_1_11_exec_as_system_via_schedtask.evtx"

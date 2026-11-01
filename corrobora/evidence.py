@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from triage_engine.path_safety import is_link_or_reparse, reject_path_links
+from corrobora.path_safety import is_link_or_reparse, reject_path_links
 
 
 def sha256_file(path: str | Path) -> str:
@@ -91,9 +91,9 @@ def capture_evidence(case_path: str, files: Iterable[tuple[str, str]]) -> list[d
             if is_link_or_reparse(ancestor):
                 raise ValueError("Evidence input cannot use links or junctions")
         total += source.stat().st_size
-    max_bytes = int(os.environ.get("TRIAGE_MAX_EVIDENCE_BYTES", str(4 * 1024**3)))
+    max_bytes = int(os.environ.get("CORROBORA_MAX_EVIDENCE_BYTES", str(4 * 1024**3)))
     if total > max_bytes:
-        raise ValueError("Evidence input exceeds TRIAGE_MAX_EVIDENCE_BYTES")
+        raise ValueError("Evidence input exceeds CORROBORA_MAX_EVIDENCE_BYTES")
     if shutil.disk_usage(root).free < total + 16 * 1024**2:
         raise ValueError("Insufficient free space to retain original evidence")
     evidence_root = _contained(root / "evidence", root)

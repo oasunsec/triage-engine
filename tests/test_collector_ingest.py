@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from triage_engine.ingest import IngestError, extract_collection
+from corrobora.ingest import IngestError, extract_collection
 
 
 def _collection_zip(files: dict[str, bytes], *, manifest: dict | None = None, extra: dict[str, bytes] | None = None) -> bytes:
@@ -100,8 +100,8 @@ class IngestEndpointTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import server
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as reviews
+        import corrobora.auth_store as auth
+        import corrobora.review_store as reviews
 
         cls.root = tempfile.mkdtemp(prefix="triage-ingest-api-")
         cls.cases, cls.uploads, cls.data = (os.path.join(cls.root, name) for name in ("cases", "uploads", "data"))
@@ -124,8 +124,8 @@ class IngestEndpointTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import server
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as reviews
+        import corrobora.auth_store as auth
+        import corrobora.review_store as reviews
 
         server.CASES_ROOT, server.UPLOAD_ROOT, server.DATA_ROOT, auth._DB_PATH, reviews._DB_PATH = cls.originals
         shutil.rmtree(cls.root, ignore_errors=True)
@@ -146,7 +146,7 @@ class IngestEndpointTests(unittest.TestCase):
     def test_upload_without_a_valid_token_is_refused(self):
         payload = _collection_zip({"logs/a.evtx": b"x"})
         self.assertEqual(self.collector.post("/api/ingest/collection", content=payload).status_code, 401)
-        self.assertEqual(self._post(payload, "tri_not-a-real-token").status_code, 401)
+        self.assertEqual(self._post(payload, "cor_not-a-real-token").status_code, 401)
         self.assertEqual(os.listdir(self.uploads), [])
 
     def test_token_management_requires_an_admin_session(self):
@@ -155,7 +155,7 @@ class IngestEndpointTests(unittest.TestCase):
 
     def test_token_is_shown_once_and_stored_hashed(self):
         created = self._token("shown-once")
-        self.assertTrue(created["token"].startswith("tri_"))
+        self.assertTrue(created["token"].startswith("cor_"))
         listed = self.admin.get("/api/ingest-tokens").json()["tokens"]
         record = next(item for item in listed if item["token_id"] == created["token_id"])
         self.assertNotIn("token", record)

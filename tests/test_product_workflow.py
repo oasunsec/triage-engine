@@ -5,7 +5,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from triage_engine.product import (
+from corrobora.product import (
     CaseMetadata,
     CaseMetadataStore,
     CollectionManifest,
@@ -18,7 +18,7 @@ from triage_engine.product import (
 class ProductWorkflowTests(unittest.TestCase):
     def test_case_metadata_retains_manifest_and_uses_retention(self):
         from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as data_dir, patch.dict("os.environ", {"TRIAGE_CASE_RETENTION_DAYS": "14"}):
+        with tempfile.TemporaryDirectory() as data_dir, patch.dict("os.environ", {"CORROBORA_CASE_RETENTION_DAYS": "14"}):
             store = CaseMetadataStore(data_dir)
             manifest = {"method": "local_live", "files": [{"path": "events.evtx"}]}
             metadata = store.save_case_metadata(

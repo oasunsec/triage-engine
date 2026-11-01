@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Sequence, Tuple
 
 from models.event_model import Alert, Signal, Finding, Incident
-from triage_engine.confidence import infer_promotion_policy, score_finding, score_signal, score_to_confidence, suspicious_context_factors
-from triage_engine.id_utils import stable_id
-from triage_engine.user_utils import normalize_user_identity, safe_user_displays
+from corrobora.confidence import infer_promotion_policy, score_finding, score_signal, score_to_confidence, suspicious_context_factors
+from corrobora.id_utils import stable_id
+from corrobora.user_utils import normalize_user_identity, safe_user_displays
 
 
 FINDING_SEVERITIES = {"critical", "high"}

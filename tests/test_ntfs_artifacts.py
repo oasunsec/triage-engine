@@ -10,13 +10,13 @@ from unittest.mock import patch
 import pytest
 
 from models.event_model import Alert, NormalizedEvent
-from triage_engine import forensic_artifacts, ntfs_artifacts, service
-from triage_engine import artifact_packager
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.cli import main as cli_main
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.forensic_correlation import correlate_evidence, cross_source_alerts
-from triage_engine.ntfs_artifacts import (NtfsEvidence, filetime_iso, parse_mft, parse_usn_journal,
+from corrobora import forensic_artifacts, ntfs_artifacts, service
+from corrobora import artifact_packager
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.cli import main as cli_main
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.forensic_correlation import correlate_evidence, cross_source_alerts
+from corrobora.ntfs_artifacts import (NtfsEvidence, filetime_iso, parse_mft, parse_usn_journal,
                                           read_ntfs_members, reason_names)
 
 EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
@@ -137,7 +137,7 @@ def process_event(image="C:\\Users\\Public\\upd.exe", *, at=T0, record="7", host
 def evidence(tmp_path, records=None, usn=b"", volume=""):
     mft_path = write(tmp_path, "mft.bin", build_mft(records or standard_records()))
     usn_path = write(tmp_path, "usn.bin", usn) if usn else None
-    from triage_engine.evidence import sha256_file
+    from corrobora.evidence import sha256_file
     ntfs, observations, warnings = read_ntfs_members(
         host=HOST, observed_at="2026-10-02T12:00:00+00:00", collector={"name": "test", "version": "1"}, volume=volume,
         mft=(mft_path, "ntfs_mft-1.mft", sha256_file(mft_path)),

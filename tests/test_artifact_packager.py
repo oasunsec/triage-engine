@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from triage_engine.artifact_packager import pack_artifacts
+from corrobora.artifact_packager import pack_artifacts
 
 
 def test_packager_copies_exact_bytes_and_writes_manifest(tmp_path):

@@ -1,4 +1,4 @@
-# Triage Engine Product Gap and Positioning Audit
+# Corrobora Product Gap and Positioning Audit
 
 > **Superseded (2026-10-31).** This audit is kept as a record. The MSP direction it recommends was dropped: client profiles, webhooks, licensing editions and AI summaries were removed. The tool now focuses on responders investigating a Windows machine. See the changelog.
 
@@ -7,7 +7,7 @@ Scope: repository implementation, packaged Windows build, supplied `EVTX Sample`
 
 ## Executive verdict
 
-Triage Engine is technically viable as a **pilot-ready offline Windows triage and escalation tool for MSPs**. It is not yet ready to position as a consumer security product, a general event-log viewer, an EDR, or a production-grade remote collection platform.
+Corrobora is technically viable as a **pilot-ready offline Windows triage and escalation tool for MSPs**. It is not yet ready to position as a consumer security product, a general event-log viewer, an EDR, or a production-grade remote collection platform.
 
 The strongest product is not “another EVTX reader.” It is:
 
@@ -100,7 +100,7 @@ The supplied corpus is a useful detection fixture, not proof of real-world accur
 | Cyber Triage / commercial DFIR suites | Automated collection, investigation, and reporting | Higher cost and broader forensic scope |
 | Splunk, SIEM, EDR, RMM | Centralized monitoring and ongoing response | Require infrastructure, agents, licensing, or ongoing operations |
 
-The defensible gap is **affordable local workflow**, not EVTX parsing. Free tools already parse logs quickly; Triage Engine should own the decision trail from “something feels wrong” to “here is the evidence package your IT provider can act on.”
+The defensible gap is **affordable local workflow**, not EVTX parsing. Free tools already parse logs quickly; Corrobora should own the decision trail from “something feels wrong” to “here is the evidence package your IT provider can act on.”
 
 ## Recommended repositioning
 

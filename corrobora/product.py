@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from triage_engine.db_migrate import run_migrations
+from corrobora.db_migrate import run_migrations
 
 SCHEMA_VERSION = "1.0"
 ACQUISITION_METHODS = ("upload", "local_live", "portable_collector", "remote_collection")
@@ -37,10 +37,10 @@ def utc_now() -> str:
 
 def _data_dir() -> str:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    configured = os.environ.get("TRIAGE_DATA_DIR", "").strip()
+    configured = os.environ.get("CORROBORA_DATA_DIR", "").strip()
     if not configured and getattr(sys, "frozen", False):
         local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
-        return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
+        return os.path.abspath(os.path.join(local_app_data, "Corrobora", "data"))
     return os.path.abspath(configured or os.path.join(root, "data"))
 
 
@@ -117,9 +117,9 @@ class ExportManifest:
 
 
 def case_retention_days() -> int:
-    """Default retention for new cases, from TRIAGE_CASE_RETENTION_DAYS (1-3650, default 90)."""
+    """Default retention for new cases, from CORROBORA_CASE_RETENTION_DAYS (1-3650, default 90)."""
     try:
-        return max(1, min(3650, int(os.environ.get("TRIAGE_CASE_RETENTION_DAYS", "90"))))
+        return max(1, min(3650, int(os.environ.get("CORROBORA_CASE_RETENTION_DAYS", "90"))))
     except ValueError:
         return 90
 

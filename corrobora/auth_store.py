@@ -14,17 +14,17 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from triage_engine.db_migrate import add_column_if_missing, run_migrations
+from corrobora.db_migrate import add_column_if_missing, run_migrations
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _resolve_data_dir() -> str:
-    configured = str(os.environ.get("TRIAGE_DATA_DIR", "") or "").strip()
+    configured = str(os.environ.get("CORROBORA_DATA_DIR", "") or "").strip()
     if not configured:
         if getattr(sys, "frozen", False):
             local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
-            return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
+            return os.path.abspath(os.path.join(local_app_data, "Corrobora", "data"))
         return os.path.join(_PROJECT_ROOT, "data")
     expanded = os.path.expanduser(configured)
     if os.path.isabs(expanded):
@@ -154,7 +154,8 @@ def _migration_004_ingest_tokens(con: sqlite3.Connection) -> None:
 
 # Ingest tokens let collectors upload evidence without a user's password. Only a
 # SHA-256 of each token is stored; the token is shown once when created.
-INGEST_TOKEN_PREFIX = "tri_"
+INGEST_TOKEN_PREFIX = "cor_"
+LEGACY_INGEST_TOKEN_PREFIXES = ("tri_",)  # issued before the rename; still accepted
 
 
 def _ingest_token_hash(token: str) -> str:
@@ -190,7 +191,7 @@ def revoke_ingest_token(token_id: str) -> bool:
 def verify_ingest_token(token: str) -> Optional[Dict[str, Any]]:
     """The active token record matching ``token``, recording its use; None otherwise."""
     token = str(token or "").strip()
-    if not token.startswith(INGEST_TOKEN_PREFIX) or len(token) > 200:
+    if not token.startswith((INGEST_TOKEN_PREFIX, *LEGACY_INGEST_TOKEN_PREFIXES)) or len(token) > 200:
         return None
     with _conn() as con:
         row = con.execute("SELECT token_id, name, created_by, revoked_at FROM ingest_tokens WHERE token_hash = ?",
@@ -233,7 +234,7 @@ def _env_hours(name: str, *, default: int, minimum: int, maximum: int) -> int:
 
 def session_ttl_hours() -> int:
     return _env_hours(
-        "TRIAGE_SESSION_TTL_HOURS",
+        "CORROBORA_SESSION_TTL_HOURS",
         default=DEFAULT_SESSION_TTL_HOURS,
         minimum=SESSION_TTL_MIN_HOURS,
         maximum=SESSION_TTL_MAX_HOURS,
@@ -242,7 +243,7 @@ def session_ttl_hours() -> int:
 
 def session_idle_hours() -> int:
     return _env_hours(
-        "TRIAGE_SESSION_IDLE_HOURS",
+        "CORROBORA_SESSION_IDLE_HOURS",
         default=DEFAULT_SESSION_IDLE_HOURS,
         minimum=SESSION_IDLE_MIN_HOURS,
         maximum=SESSION_IDLE_MAX_HOURS,

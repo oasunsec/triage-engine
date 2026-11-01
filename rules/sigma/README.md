@@ -3,7 +3,7 @@
 Drop Windows EVTX-focused Sigma `.yml` or `.yaml` rules in this folder and run:
 
 ```powershell
-python -m triage_engine.cli investigate --evtx <path> --enable-sigma
+python -m corrobora.cli investigate --evtx <path> --enable-sigma
 ```
 
 You can also point to specific files or directories with repeated `--sigma-rules` arguments.

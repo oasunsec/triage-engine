@@ -1,4 +1,4 @@
-"""Local EVTX corpus scanner for triage-engine.
+"""Local EVTX corpus scanner for corrobora.
 
 Walks one or more directories of `.evtx` files, applies a provenance
 allowlist so we never run untrusted or unlicensed samples, and invokes the
@@ -386,7 +386,7 @@ def _run_engine_for_sample(sample: Sample, *, cases_root: Path, timeout_seconds:
     Returns (result_payload, status, error_message).  Engine-side exceptions
     are caught and reported as a status string instead of being raised.
     """
-    from triage_engine.service import InvestigationRequest, run_investigation
+    from corrobora.service import InvestigationRequest, run_investigation
 
     case_path = _safe_case_dir(cases_root, sample)
     request = InvestigationRequest(
@@ -403,8 +403,8 @@ def _run_engine_for_sample(sample: Sample, *, cases_root: Path, timeout_seconds:
     started = time.perf_counter()
     reporter = _NullReporter()
     try:
-        os.environ["TRIAGE_INVESTIGATION_TIMEOUT_SECONDS"] = str(max(60, int(timeout_seconds)))
-        os.environ["TRIAGE_DETECTOR_TIMEOUT_SECONDS"] = str(min(60, max(15, timeout_seconds // 3)))
+        os.environ["CORROBORA_INVESTIGATION_TIMEOUT_SECONDS"] = str(max(60, int(timeout_seconds)))
+        os.environ["CORROBORA_DETECTOR_TIMEOUT_SECONDS"] = str(min(60, max(15, timeout_seconds // 3)))
         run_investigation(request, reporter)
     except Exception as exc:  # noqa: BLE001
         runtime = round(time.perf_counter() - started, 3)
@@ -706,7 +706,7 @@ def render_markdown(worklist_payload, *, top: int = 25):
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog=SCANNER_NAME,
-        description="Run the triage engine across a directory of EVTX samples and emit a coverage worklist.",
+        description="Run the Corrobora across a directory of EVTX samples and emit a coverage worklist.",
     )
     parser.add_argument(
         "--external-evtx-root",

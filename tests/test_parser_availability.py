@@ -8,7 +8,7 @@ from parser import evtx_reader
 
 class ParserAvailabilityTests(unittest.TestCase):
     def test_all_unreadable_duplicate_basenames_cannot_produce_a_verdict(self):
-        from triage_engine.service import InvestigationRequest, run_investigation
+        from corrobora.service import InvestigationRequest, run_investigation
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory, 'input')
             for host in ['host-a','host-b']:
@@ -23,7 +23,7 @@ class ParserAvailabilityTests(unittest.TestCase):
             self.assertFalse(list(case_root.rglob('report.html')))
 
     def test_investigation_fails_without_a_verdict_when_every_file_is_unreadable(self):
-        from triage_engine.service import InvestigationRequest, run_investigation
+        from corrobora.service import InvestigationRequest, run_investigation
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, 'evidence.evtx')
             path.write_bytes(b'placeholder')

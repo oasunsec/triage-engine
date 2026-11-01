@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from triage_engine.sigma_loader import load_rules
-from triage_engine.sigma_runner import _parse_condition, _tokenize, evaluate_rules
+from corrobora.sigma_loader import load_rules
+from corrobora.sigma_runner import _parse_condition, _tokenize, evaluate_rules
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -25,7 +25,7 @@ foreach ($name in $Channel) {
 $manifest = [ordered]@{
     schema_version = '1.0'; method = 'portable_collector'; source_host = $env:COMPUTERNAME
     collected_at = (Get-Date).ToUniversalTime().ToString('o'); timezone = [TimeZoneInfo]::Local.Id
-    channels = @($Channel); failures = @($failures); tool_version = 'triage-engine'; files = @($files)
+    channels = @($Channel); failures = @($failures); tool_version = 'corrobora'; files = @($files)
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'collection_manifest.json') -Encoding UTF8
 Write-Host "Collected $($files.Count) channel(s) to $OutputDirectory; failures: $($failures.Count)"

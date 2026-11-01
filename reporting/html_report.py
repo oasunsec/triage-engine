@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from triage_engine.display import display_input_source
+from corrobora.display import display_input_source
 
 
 def _read_json(path: str) -> Dict[str, Any]:
@@ -107,7 +107,7 @@ def generate_from_data(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Triage Case Report</title>
+<title>Corrobora Case Report</title>
 __GRAPH_LIBRARY__
 <style>
 :root {
@@ -240,7 +240,7 @@ details > summary { cursor: pointer; color: var(--accent); }
 <body>
 <header>
   <div class="header-top">
-    <h1>Triage Case Report</h1>
+    <h1>Corrobora Case Report</h1>
     <div class="header-tools">
       <button class="header-btn" onclick="window.print()">Print / Save PDF</button>
     </div>

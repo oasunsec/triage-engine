@@ -1,4 +1,4 @@
-# Triage Engine — Dependencies
+# Corrobora — Dependencies
 
 # Required
 python-evtx>=0.7.4        # EVTX file parsing (offline mode)

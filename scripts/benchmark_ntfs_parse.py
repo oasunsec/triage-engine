@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from triage_engine.ntfs_artifacts import parse_mft, parse_usn_journal  # noqa: E402
+from corrobora.ntfs_artifacts import parse_mft, parse_usn_journal  # noqa: E402
 
 FILETIME = 133_700_000_001_234_567
 DIRECTORIES = 1000

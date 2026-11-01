@@ -4,7 +4,7 @@ Windows locks both files, so they are read through the raw volume
 (``\\\\.\\C:``, administrator only). The volume is only ever read. Functions
 take any seekable binary handle, so tests run against synthetic images.
 
-Command line (elevated):  python -m triage_engine.raw_ntfs C: OUTPUT_DIR [--usn-cap-mib N]
+Command line (elevated):  python -m corrobora.raw_ntfs C: OUTPUT_DIR [--usn-cap-mib N]
 """
 
 from __future__ import annotations

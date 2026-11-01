@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Dict, Iterable, List, Tuple
 
-from triage_engine.user_utils import normalize_user_identity
+from corrobora.user_utils import normalize_user_identity
 
 BENIGN_IPS = {"", "-", "127.0.0.1", "::1", "0.0.0.0", "fe80::1", "::ffff:127.0.0.1"}
 

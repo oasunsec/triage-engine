@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from detectors.execution_impact import detect
 from models.event_model import NormalizedEvent
-from triage_engine.adapters import alerts_to_signals_findings
+from corrobora.adapters import alerts_to_signals_findings
 from correlation.incident_builder import build_incidents
 
 

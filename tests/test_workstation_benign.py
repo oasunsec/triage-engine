@@ -107,7 +107,7 @@ class InstallerServiceClusterTests(unittest.TestCase):
     def _incidents(self, images):
         from correlation.attack_chain import correlate
         from correlation.incident_builder import build_incidents
-        from triage_engine.adapters import alerts_to_signals_findings
+        from corrobora.adapters import alerts_to_signals_findings
         from datetime import timedelta
         events = [make_event(7045, timestamp=_TS + timedelta(minutes=4 * index), computer="workstation",
                              channel="System", provider="Service Control Manager",

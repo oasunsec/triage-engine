@@ -5,8 +5,8 @@ import struct
 
 import pytest
 
-from triage_engine.raw_ntfs import RawNtfsError, data_runs, extract, newest_bytes_skip
-from triage_engine.ntfs_artifacts import parse_mft, parse_usn_journal
+from corrobora.raw_ntfs import RawNtfsError, data_runs, extract, newest_bytes_skip
+from corrobora.ntfs_artifacts import parse_mft, parse_usn_journal
 
 SECTOR, CLUSTER, RECORD = 512, 4096, 1024
 MFT_LCN, MFT_CLUSTERS = 4, 4          # 16 records

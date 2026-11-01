@@ -1,7 +1,7 @@
-"""Case-based CLI for triage engine.
+"""Case-based CLI for Corrobora.
 
 This is a thin argument/console adapter.  All investigation logic lives
-in ``triage_engine.service``.
+in ``corrobora.service``.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from triage_engine import __version__
-from triage_engine.case_utils import auto_case_name, resolve_case_path
-from triage_engine.service import (
+from corrobora import __version__
+from corrobora.case_utils import auto_case_name, resolve_case_path
+from corrobora.service import (
     InvestigationRequest,
     InvestigationResult,
     ProgressReporter,
@@ -31,9 +31,9 @@ from triage_engine.service import (
     write_incident_brief as _write_incident_brief,
     write_summary_txt as _write_summary_txt,
 )
-from triage_engine.product import export_case_bundle
-from triage_engine.tuning import load_tuning
-from triage_engine.tuning_bootstrap import build_local_tuning_profile, write_local_tuning_profile
+from corrobora.product import export_case_bundle
+from corrobora.tuning import load_tuning
+from corrobora.tuning_bootstrap import build_local_tuning_profile, write_local_tuning_profile
 
 DEFAULT_LIVE_CHANNELS = "Security,System"
 ANSI_RESET = "\033[0m"
@@ -427,7 +427,7 @@ def _expand_artifact_dirs(paths: list[str], suffix: str = "") -> list[str]:
     """Replace each folder with the regular files beneath it (sorted, links never followed)."""
     from pathlib import Path
 
-    from triage_engine.path_safety import is_link_or_reparse, reject_path_links
+    from corrobora.path_safety import is_link_or_reparse, reject_path_links
     expanded: list[str] = []
     for supplied in paths:
         folder = Path(supplied)
@@ -449,7 +449,7 @@ def _expand_artifact_dirs(paths: list[str], suffix: str = "") -> list[str]:
 
 
 def cmd_pack_artifacts(args) -> int:
-    from triage_engine.artifact_packager import pack_artifacts
+    from corrobora.artifact_packager import pack_artifacts
     if len(args.registry_hive) != len(args.hive_type):
         print("Artifact packaging failed: give one --hive-type for each --registry-hive, in the same order", file=sys.stderr)
         return 1
@@ -472,14 +472,14 @@ def cmd_pack_artifacts(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Triage Engine - Windows incident investigation CLI",
+        description="Corrobora - Windows incident investigation CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  triage investigate --evtx C:\\logs\\Security.evtx --case acme-ir\n"
-            "  triage investigate --live --channels Security,System --since 2h\n"
-            "  triage summarize --case acme-ir\n"
-            "  triage export --case acme-ir --zip\n"
+            "  corrobora investigate --evtx C:\\logs\\Security.evtx --case acme-ir\n"
+            "  corrobora investigate --live --channels Security,System --since 2h\n"
+            "  corrobora summarize --case acme-ir\n"
+            "  corrobora export --case acme-ir --zip\n"
             "  triage --list-cases\n"
             "  triage --show-tuning --tuning C:\\triage\\local-overrides.json\n"
         ),

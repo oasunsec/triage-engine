@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from triage_engine import browser_artifacts as browser
+from corrobora import browser_artifacts as browser
 
 
 SCHEMA = """

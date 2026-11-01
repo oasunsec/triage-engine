@@ -99,7 +99,7 @@ $ntfs = Join-Path $out 'ntfs'
 if (-not $SkipNtfs) {
     Step 'ntfs' {
         Push-Location $repoRoot
-        try { & $Python -m triage_engine.raw_ntfs $Volume $ntfs --usn-cap-mib $UsnCapMiB | Out-Null }
+        try { & $Python -m corrobora.raw_ntfs $Volume $ntfs --usn-cap-mib $UsnCapMiB | Out-Null }
         finally { Pop-Location }
         if ($LASTEXITCODE -ne 0) { throw "raw NTFS extraction exited $LASTEXITCODE" }
     }
@@ -117,9 +117,9 @@ $manifest = [ordered]@{
 }
 $manifest | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $out 'collection_manifest.json')
 
-# Package the artifacts as a verified bundle for `triage investigate --artifacts`.
+# Package the artifacts as a verified bundle for `corrobora investigate --artifacts`.
 $bundle = Join-Path $out 'bundle'
-$pack = @('-m', 'triage_engine.cli', 'pack-artifacts', '--output-dir', $bundle, '--host', $env:COMPUTERNAME,
+$pack = @('-m', 'corrobora.cli', 'pack-artifacts', '--output-dir', $bundle, '--host', $env:COMPUTERNAME,
           '--observed-at', $collected.ToUniversalTime().ToString('o'), '--task-xml', (Join-Path $out 'tasks'))
 if ((Get-ChildItem $prefetch -Filter *.pf -ErrorAction SilentlyContinue | Measure-Object).Count) { $pack += @('--prefetch-source', $prefetch) }
 foreach ($pair in @(@('SYSTEM', 'system'), @('SOFTWARE', 'software'), @('Amcache.hve', 'amcache'), @('NTUSER.DAT', 'ntuser'))) {
@@ -136,7 +136,7 @@ try { & $Python @pack } finally { Pop-Location }
 $failed = @($steps | Where-Object { $_.status -eq 'failed' })
 Write-Output "Collected $($files.Count) files into $out ($($failed.Count) step(s) failed; see collection_manifest.json)."
 Write-Output "Investigate with:"
-Write-Output "  python -m triage_engine.cli investigate --evtx `"$logs`" --artifacts `"$bundle`" --allow-large-ntfs"
+Write-Output "  python -m corrobora.cli investigate --evtx `"$logs`" --artifacts `"$bundle`" --allow-large-ntfs"
 
 if ($ServerUrl) {
     & (Join-Path $PSScriptRoot 'send-collection.ps1') -CollectionDirectory $out -ServerUrl $ServerUrl -IngestToken $IngestToken -CaseName $CaseName

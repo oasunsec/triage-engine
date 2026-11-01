@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from models.event_model import NormalizedEvent
-from triage_engine.forensic_correlation import configured_binary_links
+from corrobora.forensic_correlation import configured_binary_links
 from tests.test_ntfs_artifacts import FILE_TIME, HOST, T0, evidence
 
 VOLUME = "\\VOLUME{01db0a051da1d5cd-801db9b9}"

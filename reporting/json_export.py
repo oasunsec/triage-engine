@@ -11,8 +11,8 @@ from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 from models.event_model import Alert, AttackChain, Finding, Incident, NormalizedEvent, Signal
-from triage_engine.export_sanitizer import sanitize_export_data
-from triage_engine.user_utils import add_user_identity_fields, normalize_user_identity
+from corrobora.export_sanitizer import sanitize_export_data
+from corrobora.user_utils import add_user_identity_fields, normalize_user_identity
 
 
 URL_RE = re.compile(r"https?://[^\s'\"`]+", re.IGNORECASE)

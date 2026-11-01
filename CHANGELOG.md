@@ -5,7 +5,19 @@
 - Added Linux and macOS start instructions to the README.
 - Fixed the quality-gates CI job.
 - Shortened the README, the production readiness guide and the quality gates guide.
-- Removed local usernames, a hostname and local paths from the tests. Sample folders now default to `sample_cache/` or `TRIAGE_SAMPLE_ROOT`.
+- Removed local usernames, a hostname and local paths from the tests. Sample folders now default to `sample_cache/` or `CORROBORA_SAMPLE_ROOT`.
+
+### Renamed to Corrobora
+
+- Triage Engine is now Corrobora. The name describes what it does: it checks event-log alerts against independent artifacts and says which claims are backed up.
+- The command is `corrobora` and settings use `CORROBORA_*`. The `triage` command, `TRIAGE_*` settings (in the environment or a `.env` file) and collector tokens starting `tri_` still work.
+- The Windows launcher keeps using an existing `TriageEngine` data folder, so accounts and cases carry over.
+- The Python package is now `corrobora`; code importing `triage_engine` must update its imports.
+
+### Live scans collect artifacts
+
+- An elevated live scan also copies Prefetch, scheduled tasks and the SYSTEM, SOFTWARE, Amcache and NTUSER hives with their transaction logs (read-only, through a shadow copy). Without administrator rights the scan says why no artifacts were collected.
+- Every case now has an Evidence tab. Cases with event logs only explain what was not collected and how to collect it.
 
 ### Collection and ingest
 
@@ -30,7 +42,7 @@
 
 - Deleting a case could report success while Windows still held a file open, leaving half a case behind. Deletes are now checked; if anything is left, the server returns an error naming the files and keeps the review decisions.
 - The jobs page button now says it removes history records. Cases are not affected.
-- Signed-in reads have their own rate budget (`TRIAGE_API_READ_LIMIT_PER_MINUTE`), so reviewing cases quickly is no longer throttled into half-loaded screens.
+- Signed-in reads have their own rate budget (`CORROBORA_API_READ_LIMIT_PER_MINUTE`), so reviewing cases quickly is no longer throttled into half-loaded screens.
 - Validation errors now show their real message instead of `[object Object]`.
 - The timeline and observations load in pages, so large cases open quickly.
 
@@ -46,7 +58,7 @@
 ### Hardening and per-host verdicts
 
 - A case reference of `.` could address the whole cases folder; it no longer can.
-- `X-Forwarded-For` is trusted only from `TRIAGE_TRUSTED_PROXIES`. Optional `TRIAGE_BOOTSTRAP_TOKEN` protects first-admin setup.
+- `X-Forwarded-For` is trusted only from `CORROBORA_TRUSTED_PROXIES`. Optional `CORROBORA_BOOTSTRAP_TOKEN` protects first-admin setup.
 - HTML reports are served in a sandbox.
 - Each host in a case gets its own verdict. Cases mixing hosts or spanning a long time show a warning.
 
@@ -61,9 +73,9 @@ First public release.
 
 - Dashboard with a review queue, case overview, finding and incident detail, and an HTML case report.
 - Screenshots of a quiet baseline case and a multi-stage attack case.
-- `TRIAGE_DEMO_REDACTION=1` masks lab-specific names in reports and exports. `TRIAGE_DEMO_REDACTION_VALUES` adds your own.
+- `CORROBORA_DEMO_REDACTION=1` masks lab-specific names in reports and exports. `CORROBORA_DEMO_REDACTION_VALUES` adds your own.
 - The UI shows whether it is running under Python or Docker.
 - PowerShell `-EncodedCommand` arguments are decoded in the evidence view.
-- `start-triage.ps1` sets up and starts the app on Windows.
+- `start-corrobora.ps1` sets up and starts the app on Windows.
 - Example environment file, plus configuration and release-check guides in `docs/`.
 - Local file paths are hidden in the UI and in exported reports.

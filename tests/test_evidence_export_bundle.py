@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from triage_engine.product import export_case_bundle, verify_case_bundle
+from corrobora.product import export_case_bundle, verify_case_bundle
 
 
 class EvidenceExportBundleTests(unittest.TestCase):

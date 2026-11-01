@@ -1,4 +1,4 @@
-"""Structured JSON logging configuration for triage-engine."""
+"""Structured JSON logging configuration for corrobora."""
 
 from __future__ import annotations
 
@@ -74,17 +74,17 @@ def configure_logging(data_root: Optional[str] = None) -> None:
 
     Default sink: stderr.
     Optional rotating file sink:
-      TRIAGE_LOG_FILE_ENABLED=1
-      TRIAGE_LOG_FILE_PATH=<path> (optional)
-      TRIAGE_LOG_FILE_MAX_BYTES=<int> (optional)
-      TRIAGE_LOG_FILE_BACKUP_COUNT=<int> (optional)
+      CORROBORA_LOG_FILE_ENABLED=1
+      CORROBORA_LOG_FILE_PATH=<path> (optional)
+      CORROBORA_LOG_FILE_MAX_BYTES=<int> (optional)
+      CORROBORA_LOG_FILE_BACKUP_COUNT=<int> (optional)
     """
 
-    logger = logging.getLogger("triage")
+    logger = logging.getLogger("corrobora")
     if getattr(logger, "_triage_configured", False):
         return
 
-    level_name = str(os.environ.get("TRIAGE_LOG_LEVEL", _DEFAULT_LEVEL) or _DEFAULT_LEVEL).upper()
+    level_name = str(os.environ.get("CORROBORA_LOG_LEVEL", _DEFAULT_LEVEL) or _DEFAULT_LEVEL).upper()
     level = getattr(logging, level_name, logging.INFO)
     logger.setLevel(level)
     logger.propagate = False
@@ -96,17 +96,17 @@ def configure_logging(data_root: Optional[str] = None) -> None:
     stderr_handler.setFormatter(formatter)
     logger.addHandler(stderr_handler)
 
-    if _to_bool(os.environ.get("TRIAGE_LOG_FILE_ENABLED", "0")):
+    if _to_bool(os.environ.get("CORROBORA_LOG_FILE_ENABLED", "0")):
         root_dir = os.path.abspath(data_root or os.path.join(os.getcwd(), "data"))
         os.makedirs(root_dir, exist_ok=True)
-        file_path = str(os.environ.get("TRIAGE_LOG_FILE_PATH", "") or "").strip()
+        file_path = str(os.environ.get("CORROBORA_LOG_FILE_PATH", "") or "").strip()
         if not file_path:
-            file_path = os.path.join(root_dir, "triage-engine.log")
+            file_path = os.path.join(root_dir, "corrobora.log")
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         file_handler = RotatingFileHandler(
             file_path,
-            maxBytes=max(1024, _int_env("TRIAGE_LOG_FILE_MAX_BYTES", _DEFAULT_MAX_BYTES)),
-            backupCount=max(1, _int_env("TRIAGE_LOG_FILE_BACKUP_COUNT", _DEFAULT_BACKUP_COUNT)),
+            maxBytes=max(1024, _int_env("CORROBORA_LOG_FILE_MAX_BYTES", _DEFAULT_MAX_BYTES)),
+            backupCount=max(1, _int_env("CORROBORA_LOG_FILE_BACKUP_COUNT", _DEFAULT_BACKUP_COUNT)),
             encoding="utf-8",
         )
         file_handler.setLevel(level)

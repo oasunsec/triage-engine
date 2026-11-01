@@ -10,11 +10,11 @@ from unittest.mock import patch
 
 import pytest
 
-from triage_engine import cli, service
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.product import export_case_bundle, verify_case_bundle
-from triage_engine.path_safety import is_link_or_reparse
+from corrobora import cli, service
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.product import export_case_bundle, verify_case_bundle
+from corrobora.path_safety import is_link_or_reparse
 
 
 def synthetic_sources(folder, *, parsing_error=False):

@@ -3,9 +3,9 @@
 import json
 import struct
 
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.registry_log_replay import log_entries, marvin32, replay
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.registry_log_replay import log_entries, marvin32, replay
 from tests.test_registry_hive_artifacts import hive_bytes, parse, software_spec, sz, write_hive
 
 

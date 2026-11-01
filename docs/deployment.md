@@ -31,8 +31,8 @@ For a Linux host, run as the non-root account responsible for the application:
 
 ```bash
 mkdir -p data cases
-export TRIAGE_CONTAINER_UID="$(id -u)"
-export TRIAGE_CONTAINER_GID="$(id -g)"
+export CORROBORA_CONTAINER_UID="$(id -u)"
+export CORROBORA_CONTAINER_GID="$(id -g)"
 test -w data && test -w cases
 docker compose up --build -d
 docker compose ps
@@ -59,7 +59,7 @@ The Windows distribution also excludes the developer's local tuning profile.
 
 Use a maintained TLS reverse proxy and explicitly configure the trusted host,
 allowed origins, and secure-cookie settings documented in `configuration.md`.
-Keep the application listener behind that proxy. Set `TRIAGE_SECURE_COOKIES=1`
+Keep the application listener behind that proxy. Set `CORROBORA_SECURE_COOKIES=1`
 for HTTPS deployments and restrict local-path investigation roots. Do not use
 multiple Uvicorn workers: job execution, admission controls, and Quick Check
 capability tokens include process-local state. Separate installations need an
@@ -95,7 +95,7 @@ event handlers remain, so this is not a strict script-source CSP deployment.
 At single-process startup, queued/running jobs from the previous process are
 marked failed/interrupted. Their upload directories remain available for an
 operator rerun. Completed case output is preserved; automatic requeue is not
-supported. Use `TRIAGE_ENV_FILE` to select an explicit environment file instead
+supported. Use `CORROBORA_ENV_FILE` to select an explicit environment file instead
 of the project `.env`/`.env.txt` defaults, including an absent file for isolated
 verification.
 
@@ -113,10 +113,10 @@ Sigma content is missing even if code validation passes. This is a candidate
 gate; it does not certify host security, signing, or environment accuracy.
 
 For browser checks, install Playwright and its Chromium browser in a development
-environment, start an isolated server with temporary `TRIAGE_DATA_DIR` and
-`TRIAGE_CASES_DIR`, and place a known fixture case in that case directory. Set
-`TRIAGE_E2E_URL`, `TRIAGE_E2E_USERNAME`, and `TRIAGE_E2E_PASSWORD`, then run
-`node scripts/check_workspace.cjs`. Only set `TRIAGE_E2E_ALLOW_BOOTSTRAP=1` for a
+environment, start an isolated server with temporary `CORROBORA_DATA_DIR` and
+`CORROBORA_CASES_DIR`, and place a known fixture case in that case directory. Set
+`CORROBORA_E2E_URL`, `CORROBORA_E2E_USERNAME`, and `CORROBORA_E2E_PASSWORD`, then run
+`node scripts/check_workspace.cjs`. Only set `CORROBORA_E2E_ALLOW_BOOTSTRAP=1` for a
 disposable first-run database. Never point this script at a production account.
 It saves screenshots and a machine-readable check report under
 `output/workspace-check/`.

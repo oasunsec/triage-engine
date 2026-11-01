@@ -93,8 +93,8 @@ class PerformanceAPITests(unittest.TestCase):
         os.makedirs(server.DATA_ROOT, exist_ok=True)
         os.makedirs(server.BACKUPS_ROOT, exist_ok=True)
 
-        import triage_engine.review_store as rs
-        import triage_engine.auth_store as auth
+        import corrobora.review_store as rs
+        import corrobora.auth_store as auth
 
         self._orig_review_db = rs._DB_PATH
         self._orig_auth_db = auth._DB_PATH
@@ -112,8 +112,8 @@ class PerformanceAPITests(unittest.TestCase):
 
     def tearDown(self):
         import server
-        import triage_engine.review_store as rs
-        import triage_engine.auth_store as auth
+        import corrobora.review_store as rs
+        import corrobora.auth_store as auth
 
         server.CASES_ROOT = self._orig_cases_root
         server.UPLOAD_ROOT = self._orig_upload_root
@@ -137,7 +137,7 @@ class PerformanceAPITests(unittest.TestCase):
 
     def test_queue_query_under_500ms_with_1000_items(self):
         import server
-        from triage_engine.review_store import upsert_finding_review
+        from corrobora.review_store import upsert_finding_review
 
         case_name = "perf-queue-case"
         _create_case(self._cases_dir, case_name)

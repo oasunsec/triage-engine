@@ -76,7 +76,7 @@ cross-source relationships. Keep memory/disk parsing and remote acquisition as
 separate adapter and acquisition phases from the audit roadmap.
 
 Organization: new source is `browser_artifacts.py`, `prefetch_artifacts.py`,
-`artifact_packager.py`, and `path_safety.py` under `triage_engine/`; four new
+`artifact_packager.py`, and `path_safety.py` under `corrobora/`; four new
 test modules belong under `tests/`; this state record belongs under `docs/`.
 Generated inputs, XML, CLI cases, and review evidence are contained under ignored
 `runtime/`. Automatic approval review rejected recursive fixture cleanup with

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Triage Engine · Investigation workspace</title>
+<title>Corrobora · Investigation workspace</title>
 <meta name="description" content="Windows endpoint investigation, evidence review, and incident handoff.">
 <link rel="stylesheet" href="/assets/dashboard.css">
 <link rel="stylesheet" href="/assets/workspace.css">
@@ -12,7 +12,7 @@
 <a class="skip-link" href="#main-content">Skip to workspace</a>
 <div class="shell">
   <aside class="sidebar" id="workspace-nav" aria-label="Workspace navigation">
-    <div class="logo"><span class="brand-mark" aria-hidden="true">T</span><div>Triage<span class="brand-subtitle">INVESTIGATION ENGINE</span></div></div>
+    <div class="logo"><span class="brand-mark" aria-hidden="true">C</span><div>Corrobora<span class="brand-subtitle">EVIDENCE-LINKED TRIAGE</span></div></div>
     <nav class="nav" aria-label="Primary">
       <div class="nav-label">Workspace</div>
       <button type="button" class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')"><span class="nav-icon icon-overview" aria-hidden="true"></span>Overview</button>
@@ -226,7 +226,7 @@
         <div class="card" style="max-width:760px">
           <div class="hero-eyebrow">Guided check</div>
           <div class="card-title" style="font-size:24px">Check this computer</div>
-          <div class="subtle-hint" style="font-size:14px;line-height:1.6">Triage Engine checks recent Windows security, system, PowerShell, and Sysmon activity. It does not make changes to this computer.</div>
+          <div class="subtle-hint" style="font-size:14px;line-height:1.6">Corrobora checks recent Windows security, system, PowerShell, and Sysmon activity. It does not make changes to this computer.</div>
           <div id="quick-check-status" class="card-soft" style="margin-top:16px">Ready to start. For a complete check, Windows may ask for administrator permission to read protected logs.</div>
           <div id="quick-check-actions" class="auth-actions" style="margin-top:16px">
             <button class="btn btn-primary" id="btn-quick-check" onclick="startQuickCheck()">Start Check</button>
@@ -384,7 +384,7 @@
 </div>
 <div id="toast-stack" class="toast-stack" role="status" aria-live="polite" aria-atomic="false"></div>
 <div id="auth-overlay" class="auth-overlay hidden">
-  <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div class="auth-brand"><span class="brand-mark" aria-hidden="true">T</span><strong>Triage Engine</strong><span>ANALYST WORKSPACE</span></div><div class="auth-intro">From event logs<br>to clear decisions.</div>
+  <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title"><div class="auth-brand"><span class="brand-mark" aria-hidden="true">C</span><strong>Corrobora</strong><span>ANALYST WORKSPACE</span></div><div class="auth-intro">From event logs<br>to clear decisions.</div>
     <div class="card-title" id="auth-title">Sign In</div>
     <div class="auth-copy" id="auth-copy">Sign in to review cases, launch investigations, and keep analyst actions attributable.</div>
     <div class="auth-grid">
@@ -398,7 +398,7 @@
       </div>
       <div class="input-group hidden" id="auth-bootstrap-token-group">
         <label for="auth-bootstrap-token">Bootstrap token</label>
-        <input class="input" autocomplete="off" id="auth-bootstrap-token" type="password" placeholder="Value of TRIAGE_BOOTSTRAP_TOKEN">
+        <input class="input" autocomplete="off" id="auth-bootstrap-token" type="password" placeholder="Value of CORROBORA_BOOTSTRAP_TOKEN">
       </div>
     </div>
     <div class="auth-actions">

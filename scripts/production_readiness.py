@@ -1,4 +1,4 @@
-"""Production-readiness check for Triage Engine."""
+"""Production-readiness check for Corrobora."""
 
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ def _recommendations(validation: Dict[str, Any], tuning: Dict[str, Any], sigma: 
         recommendations.append("Fix failing validation modules before changing tuning or onboarding more Sigma content.")
     if not tuning.get("configured"):
         recommendations.append(
-            "Review 3-5 clean EVTX cases, run 'triage tuning-init --case <case> --force', and add only exact allowlists or suppressions you can verify."
+            "Review 3-5 clean EVTX cases, run 'corrobora tuning-init --case <case> --force', and add only exact allowlists or suppressions you can verify."
         )
     if sigma.get("rule_count", 0) <= 0:
         recommendations.append("Add a reviewed Sigma starter pack before enabling Sigma in broader pilot runs.")

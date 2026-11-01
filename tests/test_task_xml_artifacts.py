@@ -6,10 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
-from triage_engine import cli, service
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.task_xml_artifacts import parse_task_xml
+from corrobora import cli, service
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.task_xml_artifacts import parse_task_xml
 
 CONTEXT = {"source_name": "scheduled_task_xml-1.xml", "source_sha256": "d" * 64, "host": "WS-LAB-01",
            "observed_at": "2026-10-02T12:00:00Z", "collector": {"name": "test", "version": "1"}}

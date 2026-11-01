@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compatibility entrypoint.
 
-- Supports modern subcommands via triage_engine.cli
+- Supports modern subcommands via corrobora.cli
 - Preserves legacy single-run style:
     python main.py --evtx logs/
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import multiprocessing
 import sys
 
-from triage_engine.cli import main as cli_main
+from corrobora.cli import main as cli_main
 
 
 SUBCOMMANDS = {"investigate", "summarize", "export", "tuning-init"}

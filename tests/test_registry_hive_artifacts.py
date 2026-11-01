@@ -10,11 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from models.event_model import NormalizedEvent
-from triage_engine import cli, service
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.forensic_correlation import correlate_evidence
-from triage_engine.registry_hive_artifacts import Hive, HiveError, parse_registry_hive
+from corrobora import cli, service
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.forensic_correlation import correlate_evidence
+from corrobora.registry_hive_artifacts import Hive, HiveError, parse_registry_hive
 
 CONTEXT = {"source_name": "registry_hive-1.hive", "source_sha256": "e" * 64, "host": "WS-LAB-01",
            "observed_at": "2026-10-02T12:00:00Z", "collector": {"name": "test", "version": "1"}}
@@ -332,7 +332,7 @@ def test_oversized_hive_is_rejected_by_parameter_and_environment(monkeypatch):
     content, _ = hive_bytes(software_spec())
     with pytest.raises(HiveError, match="byte limit"):
         parse(content, max_bytes=len(content) - 1)
-    monkeypatch.setenv("TRIAGE_MAX_HIVE_BYTES", str(len(content) - 1))
+    monkeypatch.setenv("CORROBORA_MAX_HIVE_BYTES", str(len(content) - 1))
     with pytest.raises(HiveError, match="byte limit"):
         parse(content)
 

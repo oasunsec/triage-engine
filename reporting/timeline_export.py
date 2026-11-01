@@ -7,8 +7,8 @@ from collections import defaultdict
 from typing import Dict, List
 
 from models.event_model import Finding, Incident, Signal
-from triage_engine.export_sanitizer import sanitize_export_data
-from triage_engine.user_utils import normalize_user_identity
+from corrobora.export_sanitizer import sanitize_export_data
+from corrobora.user_utils import normalize_user_identity
 
 
 def _iso(ts):

@@ -16,12 +16,12 @@ from unittest.mock import patch
 import pytest
 
 from models.event_model import Alert, NormalizedEvent
-from triage_engine import service
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.forensic_correlation import correlate_evidence, cross_source_alerts
-from triage_engine.prefetch_artifacts import parse_pecmd_jsonl
-from triage_engine.prefetch_binary import (
+from corrobora import service
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.forensic_correlation import correlate_evidence, cross_source_alerts
+from corrobora.prefetch_artifacts import parse_pecmd_jsonl
+from corrobora.prefetch_binary import (
     MAX_DECOMPRESSED, MAX_FILENAMES, MAX_JOINED, MAX_STRING_TABLE, lzxpress_huffman_decompress,
     parse_prefetch_binary,
 )

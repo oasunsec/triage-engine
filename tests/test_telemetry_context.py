@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from detectors.telemetry_context import detect
 from detectors.credential_access import detect as credential_detect
 from models.event_model import NormalizedEvent
-from triage_engine.adapters import alerts_to_signals_findings
+from corrobora.adapters import alerts_to_signals_findings
 from detectors.fp_filter import FPFilter
 
 

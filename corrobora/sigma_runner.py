@@ -6,7 +6,7 @@ import re
 from typing import Iterable, List, Tuple
 
 from models.event_model import Alert, NormalizedEvent
-from triage_engine.sigma_mapper import event_values, split_modifier, supported_field
+from corrobora.sigma_mapper import event_values, split_modifier, supported_field
 
 
 TACTIC_MAP = {

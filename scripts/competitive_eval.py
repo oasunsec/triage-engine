@@ -1,4 +1,4 @@
-"""Competitive evaluation runner for triage engine and optional Hayabusa benchmarking."""
+"""Competitive evaluation runner for Corrobora and optional Hayabusa benchmarking."""
 
 from __future__ import annotations
 
@@ -365,7 +365,7 @@ def _build_scorecard(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run competitive benchmark cases for triage engine.")
+    parser = argparse.ArgumentParser(description="Run competitive benchmark cases for Corrobora.")
     parser.add_argument("--manifest", required=True, help="Benchmark manifest JSON file.")
     parser.add_argument("--report", default=str(DEFAULT_REPORT), help="Path for output report JSON.")
     parser.add_argument("--run-name", help="Optional run name override.")
@@ -532,7 +532,7 @@ def _run_sample(
     triage_command = [
         sys.executable,
         "-m",
-        "triage_engine.cli",
+        "corrobora.cli",
         "investigate",
         "--evtx",
         str(sample_path),

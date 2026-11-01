@@ -37,40 +37,51 @@ if ($Elevated -and -not (Test-TriageAdministrator)) {
     if ($DataRoot) { $arguments += @("-DataRoot", (ConvertTo-TriageProcessArgument $DataRoot)) }
     if ($CasesRoot) { $arguments += @("-CasesRoot", (ConvertTo-TriageProcessArgument $CasesRoot)) }
     Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Verb RunAs | Out-Null
-    Write-Host "Windows is requesting administrator permission for Triage Engine."
+    Write-Host "Windows is requesting administrator permission for Corrobora."
     return
 }
 
-$installRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "TriageEngine.exe")) {
+$installRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "Corrobora.exe")) {
     (Resolve-Path $PSScriptRoot).Path
 } else {
     (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
 }
-$serverExe = Join-Path $installRoot "TriageEngine.exe"
+$serverExe = Join-Path $installRoot "Corrobora.exe"
 $repoRoot = $installRoot
 $programFiles = [Environment]::GetFolderPath("ProgramFiles")
 $isInstalled = $programFiles -and $installRoot.StartsWith($programFiles.TrimEnd("\") + "\", [StringComparison]::OrdinalIgnoreCase)
 $defaultDataParent = if ($isInstalled) { [Environment]::GetFolderPath("CommonApplicationData") } else { [Environment]::GetFolderPath("LocalApplicationData") }
-$dataRoot = if ($DataRoot) { $DataRoot } elseif ($env:TRIAGE_DATA_DIR) { $env:TRIAGE_DATA_DIR } else { Join-Path $defaultDataParent "TriageEngine\data" }
-$casesRoot = if ($CasesRoot) { $CasesRoot } elseif ($env:TRIAGE_CASES_DIR) { $env:TRIAGE_CASES_DIR } else { Join-Path $defaultDataParent "TriageEngine\cases" }
+$dataRoot = if ($DataRoot) { $DataRoot } elseif ($env:CORROBORA_DATA_DIR) { $env:CORROBORA_DATA_DIR } else { Join-Path $defaultDataParent "Corrobora\data" }
+$casesRoot = if ($CasesRoot) { $CasesRoot } elseif ($env:CORROBORA_CASES_DIR) { $env:CORROBORA_CASES_DIR } else { Join-Path $defaultDataParent "Corrobora\cases" }
+# Installs from before the rename keep their accounts and cases under TriageEngine.
+function Resolve-LegacyRoot([string]$Path) {
+    $legacy = $Path -replace '\\Corrobora\\', '\TriageEngine\'
+    if ($legacy -ne $Path -and -not (Test-Path -LiteralPath $Path) -and (Test-Path -LiteralPath $legacy)) {
+        Write-Host "Using existing data from before the rename: $legacy"
+        return $legacy
+    }
+    return $Path
+}
+$dataRoot = Resolve-LegacyRoot $dataRoot
+$casesRoot = Resolve-LegacyRoot $casesRoot
 New-Item -ItemType Directory -Path $dataRoot,$casesRoot -Force | Out-Null
-$env:TRIAGE_HOST = "127.0.0.1"
-$env:TRIAGE_PORT = $Port.ToString()
-$env:TRIAGE_DATA_DIR = $dataRoot
-$env:TRIAGE_CASES_DIR = $casesRoot
-$env:TRIAGE_RUNTIME_MODE = "local"
+$env:CORROBORA_HOST = "127.0.0.1"
+$env:CORROBORA_PORT = $Port.ToString()
+$env:CORROBORA_DATA_DIR = $dataRoot
+$env:CORROBORA_CASES_DIR = $casesRoot
+$env:CORROBORA_RUNTIME_MODE = "local"
 
 if (Test-Path -LiteralPath $serverExe) {
     $command = $serverExe
     $arguments = @()
 } else {
-    $python = if ($env:TRIAGE_PYTHON) { $env:TRIAGE_PYTHON } else { (Get-Command python -ErrorAction Stop).Source }
+    $python = if ($env:CORROBORA_PYTHON) { $env:CORROBORA_PYTHON } else { (Get-Command python -ErrorAction Stop).Source }
     $command = $python
     $arguments = @(Join-Path $repoRoot "server.py")
 }
 
 if (-not (Test-Path -LiteralPath $serverExe) -and -not (Test-Path -LiteralPath $arguments[0])) {
-    throw "Triage Engine executable or source server was not found under: $installRoot"
+    throw "Corrobora executable or source server was not found under: $installRoot"
 }
 
 $startParams = @{ FilePath = $command; WorkingDirectory = $installRoot; PassThru = $true }
@@ -82,7 +93,7 @@ if (-not $NoBrowser) {
 if ($Wait) {
     Wait-Process -Id $process.Id
 } else {
-    Write-Host "Triage Engine is starting at http://127.0.0.1:$Port (PID $($process.Id))."
+    Write-Host "Corrobora is starting at http://127.0.0.1:$Port (PID $($process.Id))."
     Write-Host "Data: $dataRoot"
     Write-Host "Cases: $casesRoot"
 }

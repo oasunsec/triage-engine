@@ -12,8 +12,8 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from triage_engine.product import derive_disposition
-from triage_engine.telemetry import response_priority
+from corrobora.product import derive_disposition
+from corrobora.telemetry import response_priority
 
 SCOPE_SCHEMA_VERSION = "1.1"
 LONG_WINDOW_DAYS = 7

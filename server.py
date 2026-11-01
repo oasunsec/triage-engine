@@ -1,4 +1,4 @@
-"""Triage Engine — REST API and Web Dashboard.
+"""Corrobora — REST API and Web Dashboard.
 
 Start with:
     python server.py
@@ -6,8 +6,8 @@ Start with:
 Then open http://localhost:8000 in your browser.
 
 Architecture: this file is a thin HTTP adapter.  All investigation logic
-lives in ``triage_engine.service``.  Jobs are persisted in SQLite via
-``triage_engine.job_store``.
+lives in ``corrobora.service``.  Jobs are persisted in SQLite via
+``corrobora.job_store``.
 """
 
 from __future__ import annotations
@@ -49,8 +49,8 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from triage_engine.env_loader import load_project_env
-load_project_env(ROOT_DIR, explicit=os.environ.get("TRIAGE_ENV_FILE"))
+from corrobora.env_loader import load_project_env
+load_project_env(ROOT_DIR, explicit=os.environ.get("CORROBORA_ENV_FILE"))
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,16 +60,16 @@ from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
-from triage_engine import __version__
-from triage_engine.case_utils import resolve_case_path
-from triage_engine.export_sanitizer import apply_demo_redaction_data, apply_demo_redaction_text
-from triage_engine.forensic_api import _JSON_CACHE as _FORENSIC_JSON_CACHE, build_forensics_router
-from triage_engine.ingest import IngestError, extract_collection
-from triage_engine.auth_store import create_ingest_token, list_ingest_tokens, revoke_ingest_token, verify_ingest_token
-from triage_engine.logging_config import configure_logging
+from corrobora import __version__
+from corrobora.case_utils import resolve_case_path
+from corrobora.export_sanitizer import apply_demo_redaction_data, apply_demo_redaction_text
+from corrobora.forensic_api import _JSON_CACHE as _FORENSIC_JSON_CACHE, build_forensics_router
+from corrobora.ingest import IngestError, extract_collection
+from corrobora.auth_store import create_ingest_token, list_ingest_tokens, revoke_ingest_token, verify_ingest_token
+from corrobora.logging_config import configure_logging
 from parser.live_reader import classify_live_channel_error
-from triage_engine.service import InvestigationRequest, ProgressReporter, run_investigation
-from triage_engine.job_store import (
+from corrobora.service import InvestigationRequest, ProgressReporter, run_investigation
+from corrobora.job_store import (
     create_job,
     update_job,
     get_job,
@@ -79,14 +79,14 @@ from triage_engine.job_store import (
     clear_upload_path,
     reconcile_interrupted_jobs,
 )
-from triage_engine.product import (
+from corrobora.product import (
     ACQUISITION_METHODS,
     CaseMetadata,
     CaseMetadataStore,
     CollectionManifest,
     export_case_bundle,
 )
-from triage_engine.review_store import (
+from corrobora.review_store import (
     get_finding_review,
     upsert_finding_review,
     get_incident_review,
@@ -108,7 +108,7 @@ from triage_engine.review_store import (
     VALID_STATUSES,
     VALID_DISPOSITIONS,
 )
-from triage_engine.auth_store import (
+from corrobora.auth_store import (
     VALID_ROLES,
     authenticate_user,
     bootstrap_admin,
@@ -150,7 +150,7 @@ def _resolve_runtime_dir(env_name: str, default_relative: str) -> str:
     configured = str(os.environ.get(env_name, "") or "").strip()
     if not configured and getattr(sys, "frozen", False):
         local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
-        return os.path.abspath(os.path.join(local_app_data, "TriageEngine", default_relative))
+        return os.path.abspath(os.path.join(local_app_data, "Corrobora", default_relative))
     value = configured or default_relative
     expanded = os.path.expanduser(value)
     if os.path.isabs(expanded):
@@ -212,11 +212,11 @@ def _cors_origins_from_env(raw_value: str, *, default_port: int) -> List[str]:
     return [f"http://localhost:{default_port}", f"http://127.0.0.1:{default_port}"]
 
 
-SERVER_HOST = str(os.environ.get("TRIAGE_HOST", DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST).strip() or DEFAULT_SERVER_HOST
-SERVER_PORT = _env_int("TRIAGE_PORT", default=DEFAULT_SERVER_PORT, minimum=1, maximum=65535)
-DATA_ROOT = _resolve_runtime_dir("TRIAGE_DATA_DIR", DEFAULT_DATA_DIR)
-CASES_ROOT = _resolve_runtime_dir("TRIAGE_CASES_DIR", DEFAULT_CASES_DIR)
-UPLOAD_ROOT = _resolve_runtime_dir("TRIAGE_UPLOAD_DIR", (
+SERVER_HOST = str(os.environ.get("CORROBORA_HOST", DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST).strip() or DEFAULT_SERVER_HOST
+SERVER_PORT = _env_int("CORROBORA_PORT", default=DEFAULT_SERVER_PORT, minimum=1, maximum=65535)
+DATA_ROOT = _resolve_runtime_dir("CORROBORA_DATA_DIR", DEFAULT_DATA_DIR)
+CASES_ROOT = _resolve_runtime_dir("CORROBORA_CASES_DIR", DEFAULT_CASES_DIR)
+UPLOAD_ROOT = _resolve_runtime_dir("CORROBORA_UPLOAD_DIR", (
     os.path.join(DATA_ROOT, "uploads")
     if getattr(sys, "frozen", False)
     else os.path.join(ROOT_DIR, "uploads")
@@ -227,32 +227,32 @@ os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(CASES_ROOT, exist_ok=True)
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 
-# Max upload size per file: configurable via TRIAGE_MAX_UPLOAD_MB (default 500 MB)
-MAX_UPLOAD_MB = _env_int("TRIAGE_MAX_UPLOAD_MB", default=DEFAULT_MAX_UPLOAD_MB, minimum=1)
+# Max upload size per file: configurable via CORROBORA_MAX_UPLOAD_MB (default 500 MB)
+MAX_UPLOAD_MB = _env_int("CORROBORA_MAX_UPLOAD_MB", default=DEFAULT_MAX_UPLOAD_MB, minimum=1)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-# Collector archives carry $MFT copies of several GiB; TRIAGE_MAX_INGEST_MB caps one upload.
-MAX_INGEST_BYTES = _env_int("TRIAGE_MAX_INGEST_MB", default=12288, minimum=1) * 1024 * 1024
+# Collector archives carry $MFT copies of several GiB; CORROBORA_MAX_INGEST_MB caps one upload.
+MAX_INGEST_BYTES = _env_int("CORROBORA_MAX_INGEST_MB", default=12288, minimum=1) * 1024 * 1024
 # The aggregate limit protects disk and request handling when many individually
 # valid files are submitted in a single investigation request.
 MAX_AGGREGATE_UPLOAD_MB = _env_int(
-    "TRIAGE_MAX_AGGREGATE_UPLOAD_MB", default=MAX_UPLOAD_MB, minimum=1
+    "CORROBORA_MAX_AGGREGATE_UPLOAD_MB", default=MAX_UPLOAD_MB, minimum=1
 )
 MAX_AGGREGATE_UPLOAD_BYTES = MAX_AGGREGATE_UPLOAD_MB * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 MAX_CONCURRENT_JOBS = _env_int(
-    "TRIAGE_MAX_CONCURRENT_JOBS", default=DEFAULT_MAX_CONCURRENT_JOBS, minimum=1, maximum=32
+    "CORROBORA_MAX_CONCURRENT_JOBS", default=DEFAULT_MAX_CONCURRENT_JOBS, minimum=1, maximum=32
 )
 MAX_QUEUED_JOBS = _env_int(
-    "TRIAGE_MAX_QUEUED_JOBS", default=DEFAULT_MAX_QUEUED_JOBS, minimum=0, maximum=256
+    "CORROBORA_MAX_QUEUED_JOBS", default=DEFAULT_MAX_QUEUED_JOBS, minimum=0, maximum=256
 )
-SESSION_COOKIE = "triage_session"
-QUEUE_SYNC_INTERVAL_SECONDS = int(os.environ.get("TRIAGE_QUEUE_SYNC_INTERVAL_SECONDS", "30"))
+SESSION_COOKIE = "corrobora_session"
+QUEUE_SYNC_INTERVAL_SECONDS = int(os.environ.get("CORROBORA_QUEUE_SYNC_INTERVAL_SECONDS", "30"))
 CSRF_HEADER = "X-CSRF-Token"
 CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/bootstrap"}
 STATE_CHANGING_METHODS = {"POST", "PATCH", "DELETE"}
 RATE_LIMIT_WINDOW_SECONDS = 60
-API_READ_LIMIT_PER_MINUTE = _env_int("TRIAGE_API_READ_LIMIT_PER_MINUTE", default=600, minimum=60)
-_CSRF_SECRET = os.environ.get("TRIAGE_CSRF_SECRET", "").strip() or secrets.token_urlsafe(32)
+API_READ_LIMIT_PER_MINUTE = _env_int("CORROBORA_API_READ_LIMIT_PER_MINUTE", default=600, minimum=60)
+_CSRF_SECRET = os.environ.get("CORROBORA_CSRF_SECRET", "").strip() or secrets.token_urlsafe(32)
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"']+")
 _RATE_LIMIT_BUCKETS: Dict[str, deque[float]] = {}
 _RATE_LIMIT_LOCK = Lock()
@@ -262,19 +262,19 @@ _SERVER_STARTED_AT = time.monotonic()
 STARTUP_DISK_HARD_MIN_BYTES = 100 * 1024 * 1024
 STARTUP_DISK_WARN_BYTES = 1024 * 1024 * 1024
 CORS_ORIGINS = _cors_origins_from_env(
-    os.environ.get("TRIAGE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
+    os.environ.get("CORROBORA_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
     default_port=SERVER_PORT,
 )
 TRUSTED_HOSTS = [
     value.strip()
-    for value in str(os.environ.get("TRIAGE_TRUSTED_HOSTS", DEFAULT_TRUSTED_HOSTS) or "").split(",")
+    for value in str(os.environ.get("CORROBORA_TRUSTED_HOSTS", DEFAULT_TRUSTED_HOSTS) or "").split(",")
     if value.strip()
 ] or ["localhost", "127.0.0.1", "[::1]"]
 # X-Forwarded-For is only honored from these reverse-proxy peers; otherwise any
 # client could spoof its address to evade per-IP login throttling.
 TRUSTED_PROXIES = {
     value.strip().lower().strip("[]")
-    for value in str(os.environ.get("TRIAGE_TRUSTED_PROXIES", "") or "").split(",")
+    for value in str(os.environ.get("CORROBORA_TRUSTED_PROXIES", "") or "").split(",")
     if value.strip()
 }
 REPORT_CSP = (
@@ -284,8 +284,8 @@ REPORT_CSP = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; "
     "connect-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 )
-BOOTSTRAP_TOKEN = str(os.environ.get("TRIAGE_BOOTSTRAP_TOKEN", "") or "").strip()
-RUNTIME_MODE = _runtime_mode_from_env(os.environ.get("TRIAGE_RUNTIME_MODE", DEFAULT_RUNTIME_MODE))
+BOOTSTRAP_TOKEN = str(os.environ.get("CORROBORA_BOOTSTRAP_TOKEN", "") or "").strip()
+RUNTIME_MODE = _runtime_mode_from_env(os.environ.get("CORROBORA_RUNTIME_MODE", DEFAULT_RUNTIME_MODE))
 RUNTIME_LABEL = "Docker" if RUNTIME_MODE == "docker" else "Local Python"
 
 def _allowed_path_roots_from_env(raw_value: str) -> List[str]:
@@ -300,9 +300,9 @@ def _allowed_path_roots_from_env(raw_value: str) -> List[str]:
 
 
 # Empty remains backwards compatible for localhost deployments. Set
-# TRIAGE_ALLOWED_PATH_ROOTS (semicolon-separated on Windows) to confine path
+# CORROBORA_ALLOWED_PATH_ROOTS (semicolon-separated on Windows) to confine path
 # investigations to explicit evidence directories.
-ALLOWED_PATH_ROOTS = _allowed_path_roots_from_env(os.environ.get("TRIAGE_ALLOWED_PATH_ROOTS", ""))
+ALLOWED_PATH_ROOTS = _allowed_path_roots_from_env(os.environ.get("CORROBORA_ALLOWED_PATH_ROOTS", ""))
 
 # Jobs are admitted before execution so a burst cannot create unbounded native
 # worker threads. Keep the imported Thread fallback for existing unit tests
@@ -317,7 +317,7 @@ _JOB_ADMISSION = BoundedSemaphore(MAX_CONCURRENT_JOBS + MAX_QUEUED_JOBS)
 # This permits a fresh portable install to run a check without creating an
 # analyst account while keeping all generic cases, jobs, and review routes
 # behind normal authentication.
-QUICK_CHECK_HEADER = "X-Triage-Quick-Token"
+QUICK_CHECK_HEADER = "X-Corrobora-Quick-Token"
 QUICK_CHECK_SESSION_TTL_SECONDS = 30 * 60
 _QUICK_CHECK_LOCK = Lock()
 _QUICK_CHECK_SESSIONS: Dict[str, float] = {}
@@ -387,8 +387,8 @@ def _sanitize_error_message(detail: Any) -> str:
 
 
 configure_logging(DATA_ROOT)
-ACCESS_LOGGER = logging.getLogger("triage.access")
-SERVER_LOGGER = logging.getLogger("triage.server")
+ACCESS_LOGGER = logging.getLogger("corrobora.access")
+SERVER_LOGGER = logging.getLogger("corrobora.server")
 
 
 def _request_id_from_header(raw_header: str) -> str:
@@ -705,7 +705,7 @@ def _validate_evtx_path(path: str) -> str:
     # A network-bound server must never accept arbitrary host paths. Configure
     # explicit evidence roots before exposing the API beyond localhost.
     if not ALLOWED_PATH_ROOTS and str(SERVER_HOST).strip().lower() not in {"127.0.0.1", "localhost", "::1"}:
-        raise HTTPException(403, "Local path investigations require TRIAGE_ALLOWED_PATH_ROOTS when server is network-bound")
+        raise HTTPException(403, "Local path investigations require CORROBORA_ALLOWED_PATH_ROOTS when server is network-bound")
     if ALLOWED_PATH_ROOTS:
         allowed = False
         for root in ALLOWED_PATH_ROOTS:
@@ -849,7 +849,7 @@ def _collect_startup_validation() -> Dict[str, Any]:
         if unclaimed:
             warnings.append(
                 "Server is network-bound with no admin account; anyone who reaches it first can create one. "
-                "Set TRIAGE_BOOTSTRAP_TOKEN or complete bootstrap before exposing the port."
+                "Set CORROBORA_BOOTSTRAP_TOKEN or complete bootstrap before exposing the port."
             )
 
     return {
@@ -912,7 +912,7 @@ async def _lifespan(_: FastAPI):
 
 def _reconcile_interrupted_case_status(job: dict) -> None:
     """Update an interrupted case projection without changing completed output."""
-    from triage_engine.evidence import atomic_json
+    from corrobora.evidence import atomic_json
 
     supplied = str(job.get("case_path") or "")
     if not supplied:
@@ -940,14 +940,14 @@ def _reconcile_interrupted_case_status(job: dict) -> None:
 # FastAPI application
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="Triage Engine",
+    title="Corrobora",
     version=__version__,
     description="Windows incident investigation platform — REST API and Web Dashboard",
     lifespan=_lifespan,
     openapi_tags=OPENAPI_TAGS,
 )
 
-# CORS: localhost-only by default. Tighten or widen via TRIAGE_CORS_ORIGINS.
+# CORS: localhost-only by default. Tighten or widen via CORROBORA_CORS_ORIGINS.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -1077,7 +1077,7 @@ def _job_case_availability(case_name: str) -> Dict[str, Any]:
 
 
 def _request_is_secure(request: Request) -> bool:
-    force_secure = os.environ.get("TRIAGE_SECURE_COOKIES", "").lower() in {"1", "true", "yes"}
+    force_secure = os.environ.get("CORROBORA_SECURE_COOKIES", "").lower() in {"1", "true", "yes"}
     if force_secure:
         return True
     forwarded_proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower()
@@ -1140,9 +1140,9 @@ def _sync_queue_index_if_stale() -> int:
 
 
 def _state_db_paths() -> Dict[str, str]:
-    import triage_engine.auth_store as auth_store_module
-    import triage_engine.review_store as review_store_module
-    import triage_engine.job_store as job_store_module
+    import corrobora.auth_store as auth_store_module
+    import corrobora.review_store as review_store_module
+    import corrobora.job_store as job_store_module
 
     return {
         "auth_db": os.path.abspath(getattr(auth_store_module, "_DB_PATH", os.path.join(DATA_ROOT, "auth.db"))),
@@ -1283,7 +1283,7 @@ async def dashboard_asset(asset_name: str):
                     "example": {
                         "status": "ok",
                         "version": "0.1.0",
-                        "engine": "triage-engine",
+                        "engine": "corrobora",
                         "runtime": {"mode": "local", "label": "Local Python"},
                         "db_writable": {"all": True, "by_db": {"auth_db": True, "reviews_db": True, "jobs_db": True}},
                         "cases_dir_writable": True,
@@ -1301,7 +1301,7 @@ async def health():
     return {
         "status": "ok",
         "version": __version__,
-        "engine": "triage-engine",
+        "engine": "corrobora",
         "runtime": {"mode": RUNTIME_MODE, "label": RUNTIME_LABEL},
         "db_writable": {
             "all": all(per_db_writable.values()),
@@ -1955,8 +1955,8 @@ def _launch_elevated_local_server(port: int) -> str:
     working_directory = ROOT_DIR
     script = (
         "$ErrorActionPreference = 'Stop'; "
-        "$env:TRIAGE_HOST = '127.0.0.1'; "
-        f"$env:TRIAGE_PORT = '{int(port)}'; "
+        "$env:CORROBORA_HOST = '127.0.0.1'; "
+        f"$env:CORROBORA_PORT = '{int(port)}'; "
         f"Start-Process -FilePath {_powershell_quote(executable)} "
         f"-ArgumentList {ps_arguments} -WorkingDirectory {_powershell_quote(working_directory)} -Verb RunAs"
     )
@@ -2036,7 +2036,7 @@ def _quick_check_job_for_token(job_id: str, token: str) -> Dict[str, str]:
 def _queue_quick_check_live(request: Request, token: str) -> Dict[str, Any]:
     """Queue only the fixed, low-risk guided live collection profile."""
     if os.name != "nt":
-        raise HTTPException(400, "Live checks are only supported when Triage Engine runs on Windows")
+        raise HTTPException(400, "Live checks are only supported when Corrobora runs on Windows")
     channels = [
         "Security",
         "System",
@@ -2044,7 +2044,7 @@ def _queue_quick_check_live(request: Request, token: str) -> Dict[str, Any]:
         "Microsoft-Windows-Sysmon/Operational",
     ]
     job_id = uuid.uuid4().hex[:12]
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
 
     resolved_name = _auto_name(None, True, ",".join(channels))
     investigation_request = InvestigationRequest(
@@ -2679,8 +2679,8 @@ async def auth_audit_export(
                     "example": {
                         "backup_id": "20260316-173500",
                         "created_at": "2026-03-16T17:35:00+00:00",
-                        "data_dir": "C:/triage-engine/data",
-                        "backup_path": "C:/triage-engine/data/backups/20260316-173500",
+                        "data_dir": "C:/corrobora/data",
+                        "backup_path": "C:/corrobora/data/backups/20260316-173500",
                         "total_bytes": 173824,
                         "files": [
                             {"name": "auth.db", "size_bytes": 65536, "sha256": "abc..."},
@@ -3557,7 +3557,7 @@ async def start_investigation(
         collection_manifest=manifest,
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(evtx_path, False, "")
     create_job(job_id, case_name=resolved_name, upload_path=upload_dir)
     record_audit_event(
@@ -3626,7 +3626,7 @@ async def start_investigation_from_path(
         collection_manifest=manifest,
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(evtx_path, False, "")
     create_job(job_id, case_name=resolved_name)
     record_audit_event(
@@ -3695,7 +3695,7 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
         collect_live_artifacts=bool(body.collect_artifacts),
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(None, True, ",".join(channels))
     create_job(job_id, case_name=resolved_name)
     record_audit_event(
@@ -3799,7 +3799,7 @@ async def request_live_elevation(request: Request):
         return LiveElevationResponse(
             elevation_requested=False,
             already_elevated=True,
-            message="This Triage Engine session already has administrator permission.",
+            message="This Corrobora session already has administrator permission.",
         )
 
     port = _find_available_loopback_port()
@@ -3817,7 +3817,7 @@ async def request_live_elevation(request: Request):
     return LiveElevationResponse(
         elevation_requested=True,
         redirect_url=redirect_url,
-        message="Windows will request administrator permission for a separate local Triage Engine session.",
+        message="Windows will request administrator permission for a separate local Corrobora session.",
     )
 
 
@@ -3860,7 +3860,7 @@ async def quick_check_request_elevation(request: Request):
         return LiveElevationResponse(
             elevation_requested=False,
             already_elevated=True,
-            message="This Triage Engine session already has administrator permission.",
+            message="This Corrobora session already has administrator permission.",
         )
     port = _find_available_loopback_port()
     try:
@@ -3876,7 +3876,7 @@ async def quick_check_request_elevation(request: Request):
     return LiveElevationResponse(
         elevation_requested=True,
         redirect_url=redirect_url,
-        message="Windows will request administrator permission for a separate local Triage Engine session.",
+        message="Windows will request administrator permission for a separate local Corrobora session.",
     )
 
 
@@ -4604,7 +4604,7 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     import argparse
 
-    parser = argparse.ArgumentParser(description="Triage Engine API Server")
+    parser = argparse.ArgumentParser(description="Corrobora API Server")
     parser.add_argument("--host", default=SERVER_HOST, help=f"Bind address (default: {SERVER_HOST})")
     parser.add_argument("--port", type=int, default=SERVER_PORT, help=f"Port (default: {SERVER_PORT})")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")

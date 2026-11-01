@@ -2555,7 +2555,7 @@ class CompositeScorer:
         'sigma_match': 0.15, 'yara_hit': 0.10,
     }
 
-    TRIAGE_LEVELS = [
+    CORROBORA_LEVELS = [
         (90, 'CRITICAL', 'Immediate response required'),
         (70, 'HIGH', 'Investigate within 1 hour'),
         (40, 'MEDIUM', 'Investigate within 4 hours'),
@@ -2581,7 +2581,7 @@ class CompositeScorer:
         ))
 
         triage_level, triage_desc = 'LOW', 'Review during next shift'
-        for threshold, level, desc in self.TRIAGE_LEVELS:
+        for threshold, level, desc in self.CORROBORA_LEVELS:
             if composite >= threshold:
                 triage_level, triage_desc = level, desc
                 break

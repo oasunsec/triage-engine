@@ -330,7 +330,7 @@ def cross_source_alerts(relationships: list[dict], events: Iterable[NormalizedEv
             event_alerts[alert.event.observation_id].append(alert)
         elif alert.event is None and (alert.evidence or {}).get("observation_id"):
             artifact_alerts[alert.evidence["observation_id"]].append(alert)
-    from triage_engine.adapters import _finding_candidate
+    from corrobora.adapters import _finding_candidate
 
     intrinsic = {"weak_evidence", "service_not_suspicious"}
 
@@ -699,7 +699,7 @@ def configured_binary_links(events: Iterable[NormalizedEvent], observations: lis
     Prefetch run recorded after the event. Linked $MFT observations are appended
     to ``observations``.
     """
-    from triage_engine.executable_inventory import _prefetch_path, command_target, volume_path
+    from corrobora.executable_inventory import _prefetch_path, command_target, volume_path
 
     wanted: dict[str, list[tuple[NormalizedEvent, str, str, list[str]]]] = defaultdict(list)
     counts = Counter()

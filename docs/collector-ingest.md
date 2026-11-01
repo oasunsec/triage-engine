@@ -7,13 +7,13 @@ straight to a triage server instead. The server checks the upload and opens the 
 ## Flow
 
 1. **Issue a token.** An admin opens *User access → Collector Tokens* in the dashboard (or calls
-   `POST /api/ingest-tokens` with `{"name": "..."}`). The token (`tri_…`) is shown once.
+   `POST /api/ingest-tokens` with `{"name": "..."}`). The token (`cor_…`) is shown once.
    Only its SHA-256 hash is stored.
 2. **Collect and send.** On the machine under investigation, run this from an elevated PowerShell:
 
    ```powershell
    .\scripts\collect-windows-evidence.ps1 -OutputDirectory D:\triage\host-01 `
-       -ServerUrl https://triage.example.internal -IngestToken tri_... [-CaseName host-01-ir]
+       -ServerUrl https://corrobora.example.internal -IngestToken cor_... [-CaseName host-01-ir]
    ```
 
    The collector works as before. It reads only, writes `collection_manifest.json` with a SHA-256
@@ -22,7 +22,7 @@ straight to a triage server instead. The server checks the upload and opens the 
    The local folder and zip are kept as the responder's copy.
 3. **Server checks.** The server refuses the archive if any of these fail:
    - The token is valid and has not been revoked.
-   - The upload is within `TRIAGE_MAX_INGEST_MB`, and it expands to no more than four times that.
+   - The upload is within `CORROBORA_MAX_INGEST_MB`, and it expands to no more than four times that.
    - Every entry is a plain file or folder under the collector's own layout (`logs/`, `prefetch/`,
      `hives/`, `tasks/`, `ntfs/`, `bundle/`, `collection_manifest.json`). Absolute paths, `..`,
      drive letters and links are refused.

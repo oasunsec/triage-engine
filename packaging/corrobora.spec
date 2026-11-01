@@ -1,5 +1,5 @@
 # PyInstaller one-directory build for the local Windows distribution.
-# Build with: pyinstaller --noconfirm packaging/triage-engine.spec
+# Build with: pyinstaller --noconfirm packaging/corrobora.spec
 
 from pathlib import Path
 
@@ -26,7 +26,7 @@ for relative in ("static", "rules", "config", "scripts"):
 
 # These packages are loaded by the API and optional Sigma/live paths at runtime.
 hiddenimports = []
-for package in ("triage_engine", "models", "parser", "detectors", "correlation", "reporting"):
+for package in ("corrobora", "models", "parser", "detectors", "correlation", "reporting"):
     hiddenimports.extend(collect_submodules(package))
 for package in ("fastapi", "starlette", "uvicorn", "multipart"):
     hiddenimports.extend(collect_submodules(package))
@@ -37,7 +37,7 @@ for package in ("yaml", "win32evtlog", "win32evtlogutil"):
         # Optional dependencies are supplied by the build environment when present.
         pass
 
-datas.extend(collect_data_files("triage_engine"))
+datas.extend(collect_data_files("corrobora"))
 
 a = Analysis(
     [str(ROOT / "server.py")],
@@ -56,7 +56,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    name="TriageEngine",
+    name="Corrobora",
     exclude_binaries=True,
     debug=False,
     bootloader_ignore_signals=False,
@@ -70,5 +70,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="TriageEngine",
+    name="Corrobora",
 )

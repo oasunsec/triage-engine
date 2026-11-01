@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot ".." )).Path
-$specPath = Join-Path $repoRoot "packaging\triage-engine.spec"
+$specPath = Join-Path $repoRoot "packaging\corrobora.spec"
 if (-not $OutputRoot) { $OutputRoot = Join-Path $repoRoot "dist-windows" }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 
@@ -24,12 +24,12 @@ function Resolve-Python {
         if (-not (Test-Path -LiteralPath $Python)) { throw "Python executable not found: $Python" }
         return $Python
     }
-    if ($env:TRIAGE_PYTHON -and (Test-Path -LiteralPath $env:TRIAGE_PYTHON)) { return $env:TRIAGE_PYTHON }
+    if ($env:CORROBORA_PYTHON -and (Test-Path -LiteralPath $env:CORROBORA_PYTHON)) { return $env:CORROBORA_PYTHON }
     $venv = Join-Path $repoRoot ".venv\Scripts\python.exe"
     if (Test-Path -LiteralPath $venv) { return $venv }
     $command = Get-Command python -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
-    throw "No Python runtime found. Set -Python or TRIAGE_PYTHON."
+    throw "No Python runtime found. Set -Python or CORROBORA_PYTHON."
 }
 
 $pythonExe = Resolve-Python
@@ -47,12 +47,12 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller is unavailable. Install the build 
 & $pythonExe -m PyInstaller --noconfirm --clean --distpath $distPath --workpath $workPath $specPath
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE." }
 
-$launcher = Join-Path $repoRoot "scripts\launch-triage.ps1"
-$payloadPath = Join-Path $distPath "TriageEngine"
-if (-not (Test-Path -LiteralPath (Join-Path $payloadPath "TriageEngine.exe"))) {
-    throw "PyInstaller completed but did not produce the expected payload: $payloadPath\TriageEngine.exe"
+$launcher = Join-Path $repoRoot "scripts\launch-corrobora.ps1"
+$payloadPath = Join-Path $distPath "Corrobora"
+if (-not (Test-Path -LiteralPath (Join-Path $payloadPath "Corrobora.exe"))) {
+    throw "PyInstaller completed but did not produce the expected payload: $payloadPath\Corrobora.exe"
 }
-Copy-Item -LiteralPath $launcher -Destination (Join-Path $payloadPath "launch-triage.ps1") -Force
+Copy-Item -LiteralPath $launcher -Destination (Join-Path $payloadPath "launch-corrobora.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $payloadPath "LICENSE") -Force
 Write-Host "Portable build: $payloadPath"
 
@@ -78,7 +78,7 @@ if ($BuildInstaller) {
     if (-not $isccPath) { throw "Inno Setup compiler (ISCC.exe) was not found. Omit -BuildInstaller for a portable build." }
     $installerOut = Join-Path $OutputRoot "installer"
     New-Item -ItemType Directory -Path $installerOut -Force | Out-Null
-    & $isccPath "/DSourceDir=$payloadPath" "/DOutputDir=$installerOut" (Join-Path $repoRoot "packaging\triage-engine.iss")
+    & $isccPath "/DSourceDir=$payloadPath" "/DOutputDir=$installerOut" (Join-Path $repoRoot "packaging\corrobora.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
     Write-Host "Installer output: $installerOut"
 }

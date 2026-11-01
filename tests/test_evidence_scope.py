@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from triage_engine.evidence_scope import build_evidence_scope
+from corrobora.evidence_scope import build_evidence_scope
 
 T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 

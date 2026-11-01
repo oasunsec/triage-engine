@@ -23,8 +23,8 @@ class ForensicAPITests(unittest.TestCase):
         self.cases = Path(self.result.case_path).parent
 
         import server
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as rs
+        import corrobora.auth_store as auth
+        import corrobora.review_store as rs
         self._orig = (server.CASES_ROOT, rs._DB_PATH, auth._DB_PATH)
         server.CASES_ROOT = str(self.cases)
         rs._DB_PATH = str(self._root / "reviews.db")
@@ -47,8 +47,8 @@ class ForensicAPITests(unittest.TestCase):
         self.artifact_obs = links["relationships"][0]["target"]["observation_id"]
 
     def tearDown(self):
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as rs
+        import corrobora.auth_store as auth
+        import corrobora.review_store as rs
         for client in (self.admin, self.analyst, self.viewer):
             client.close()
         self.server.CASES_ROOT, rs._DB_PATH, auth._DB_PATH = self._orig

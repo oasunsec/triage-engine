@@ -17,8 +17,8 @@ class CaseApiSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import server
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as reviews
+        import corrobora.auth_store as auth
+        import corrobora.review_store as reviews
 
         cls.root = tempfile.mkdtemp(prefix="triage-case-api-")
         cls.cases = os.path.join(cls.root, "cases")
@@ -43,8 +43,8 @@ class CaseApiSafetyTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import server
-        import triage_engine.auth_store as auth
-        import triage_engine.review_store as reviews
+        import corrobora.auth_store as auth
+        import corrobora.review_store as reviews
 
         server.CASES_ROOT, server.UPLOAD_ROOT, server.DATA_ROOT, auth._DB_PATH, reviews._DB_PATH = cls.originals
         shutil.rmtree(cls.root, ignore_errors=True)
@@ -184,7 +184,7 @@ class CaseApiSafetyTests(unittest.TestCase):
             self.assertEqual(issued.status_code, 200)
             token = issued.json()["token"]
             self.assertEqual(anonymous.get("/api/quick/live/health").status_code, 403)
-            allowed = anonymous.get("/api/quick/live/health", headers={"X-Triage-Quick-Token": token})
+            allowed = anonymous.get("/api/quick/live/health", headers={"X-Corrobora-Quick-Token": token})
             self.assertEqual(allowed.status_code, 200)
         with patch("server._is_loopback_client", return_value=False):
             self.assertEqual(anonymous.get("/api/quick/session").status_code, 403)

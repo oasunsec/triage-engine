@@ -9,10 +9,10 @@ from unittest.mock import patch
 import pytest
 
 from models.event_model import Alert, NormalizedEvent
-from triage_engine import service
-from triage_engine.artifact_packager import pack_artifacts
-from triage_engine.forensic_correlation import command_image, correlate_evidence, cross_source_alerts
-from triage_engine.product import export_case_bundle, verify_case_bundle
+from corrobora import service
+from corrobora.artifact_packager import pack_artifacts
+from corrobora.forensic_correlation import command_image, correlate_evidence, cross_source_alerts
+from corrobora.product import export_case_bundle, verify_case_bundle
 
 T0 = datetime(2026, 10, 1, 13, 20, tzinfo=timezone.utc)
 SAMPLE_EVTX = Path(__file__).resolve().parents[1] / "repo_cache" / "sbousseaden_EVTX-ATTACK-SAMPLES" / \
@@ -266,7 +266,7 @@ def test_mixed_case_wrong_host_produces_no_links(tmp_path):
 
 
 def test_correlation_feature_flag_disables_links(tmp_path):
-    result = run_mixed(tmp_path, detector_alerts=True, env={"TRIAGE_FORENSIC_CORRELATION": "0"})
+    result = run_mixed(tmp_path, detector_alerts=True, env={"CORROBORA_FORENSIC_CORRELATION": "0"})
     findings = json.loads((Path(result.case_path) / "findings.json").read_text(encoding="utf-8"))
     assert findings["case"]["forensic_correlation"]["enabled"] is False
     assert findings["evidence_relationships"] == []
@@ -433,7 +433,7 @@ SAMPLE_4698 = Path(__file__).resolve().parents[1] / "repo_cache" / "sbousseaden_
 @pytest.mark.skipif(not SAMPLE_4698.is_file(), reason="public EVTX-ATTACK-SAMPLES corpus not present in repo_cache")
 def test_public_task_create_delete_sample_reports_contradiction_for_present_task(tmp_path):
     from parser.evtx_reader import read_evtx_path
-    from triage_engine.evidence import bind_event_sources, capture_evidence
+    from corrobora.evidence import bind_event_sources, capture_evidence
     sources = capture_evidence(str(tmp_path), [(str(SAMPLE_4698), "evtx")])
     events = read_evtx_path(str(SAMPLE_4698), source_files=[sources[0]["_retained_path"]])
     bind_event_sources(events, sources)

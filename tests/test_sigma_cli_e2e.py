@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from triage_engine.cli import main
+from corrobora.cli import main
 
 
 ROOT = Path(__file__).resolve().parents[1]

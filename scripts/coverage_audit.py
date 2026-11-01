@@ -1,4 +1,4 @@
-"""Produce an evidence-backed ATT&CK coverage inventory for Triage Engine.
+"""Produce an evidence-backed ATT&CK coverage inventory for Corrobora.
 
 This tool is intentionally an inventory, not a coverage claim.  It records
 where a technique is mapped, which Windows event IDs are visible in the same

@@ -10,8 +10,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from triage_engine import __version__
-from triage_engine.path_safety import is_link_or_reparse
+from corrobora import __version__
+from corrobora.path_safety import is_link_or_reparse
 
 _LIMIT = 64 * 1024 * 1024
 _NTFS_KINDS = {"ntfs_mft", "ntfs_usn_journal"}
@@ -108,7 +108,7 @@ def pack_artifacts(
     member_count = sum(len(paths) for paths in
                        (chromium_history, pecmd_jsonl, prefetch_source, persistence_records, scheduled_task_xml,
                         registry_hives, ntfs_mft, ntfs_usn_journal))
-    from triage_engine.forensic_artifacts import MAX_BUNDLE_MEMBERS
+    from corrobora.forensic_artifacts import MAX_BUNDLE_MEMBERS
     if not 1 <= member_count <= MAX_BUNDLE_MEMBERS:
         raise ValueError(f"Provide between 1 and {MAX_BUNDLE_MEMBERS} artifact files")
     requested = []
@@ -147,8 +147,8 @@ def pack_artifacts(
     hive_types: dict[int, str] = {}
     hive_logs: dict[int, tuple[int, str]] = {}  # log position -> (hive position, LOG1/LOG2)
     if registry_hives:
-        from triage_engine.forensic_artifacts import MAX_HIVE_BUNDLE_BYTES
-        from triage_engine.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
+        from corrobora.forensic_artifacts import MAX_HIVE_BUNDLE_BYTES
+        from corrobora.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
         hive_total = 0
         for supplied, hive_type in registry_hives:
             if hive_type not in HIVE_TYPES:

@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from triage_engine.review_store import (
+from corrobora.review_store import (
     LINK_DECISIONS,
     add_analyst_evidence_link,
     get_evidence_link_reviews,

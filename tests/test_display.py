@@ -1,6 +1,6 @@
 import unittest
 
-from triage_engine.display import display_input_source, sanitize_display_path, sanitize_display_values
+from corrobora.display import display_input_source, sanitize_display_path, sanitize_display_values
 
 
 class DisplayHelperTests(unittest.TestCase):

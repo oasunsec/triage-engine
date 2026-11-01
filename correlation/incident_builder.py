@@ -9,7 +9,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from models.event_model import AttackChain, Finding, Incident, NormalizedEvent, Signal
-from triage_engine.id_utils import stable_id
+from corrobora.id_utils import stable_id
 
 BENIGN_IPS = {"", "-", "127.0.0.1", "::1", "0.0.0.0", "fe80::1"}
 REMOTE_CREDENTIAL_FINDINGS = {"Brute Force Attack", "Password Spray Attack", "MSSQL Password Spray", "Explicit Credential Use"}

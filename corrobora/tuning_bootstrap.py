@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from triage_engine.tuning import DEFAULT_TUNING
+from corrobora.tuning import DEFAULT_TUNING
 
 
 def _utc_now() -> str:

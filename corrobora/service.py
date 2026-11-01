@@ -59,30 +59,30 @@ from reporting.graph_export import export as export_graph
 from reporting.html_report import generate_from_data
 from reporting.json_export import export_case, export_raw_events_stream
 from reporting.timeline_export import export as export_timeline
-from triage_engine.adapters import (
+from corrobora.adapters import (
     alerts_to_signals_findings,
     apply_ioc_enrichment,
     summarize_case_entities,
 )
-from triage_engine.campaigns import build_campaign_summary
-from triage_engine.case_utils import auto_case_name, ensure_case_dir
-from triage_engine.confidence import score_incident
-from triage_engine.display import display_input_source, sanitize_display_values
-from triage_engine.export_sanitizer import apply_demo_redaction_text
-from triage_engine.export_sanitizer import sanitize_export_data
-from triage_engine.evidence import atomic_json, bind_event_sources, capture_evidence, case_identity, public_sources, write_analysis_manifest
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.forensic_correlation import configured_binary_links, correlate_evidence, cross_source_alerts
-from triage_engine.executable_inventory import build_executable_inventory
-from triage_engine import __version__
-from triage_engine.evidence_scope import build_evidence_scope
-from triage_engine.id_utils import assign_display_labels
-from triage_engine.playbooks import apply_playbook
-from triage_engine.rule_metrics import build_rule_metrics, build_tuning_recommendations
-from triage_engine.status import RunStatus
-from triage_engine.telemetry import response_priority, summarize_telemetry
-from triage_engine.tuning import load_tuning
-from triage_engine.product import (
+from corrobora.campaigns import build_campaign_summary
+from corrobora.case_utils import auto_case_name, ensure_case_dir
+from corrobora.confidence import score_incident
+from corrobora.display import display_input_source, sanitize_display_values
+from corrobora.export_sanitizer import apply_demo_redaction_text
+from corrobora.export_sanitizer import sanitize_export_data
+from corrobora.evidence import atomic_json, bind_event_sources, capture_evidence, case_identity, public_sources, write_analysis_manifest
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.forensic_correlation import configured_binary_links, correlate_evidence, cross_source_alerts
+from corrobora.executable_inventory import build_executable_inventory
+from corrobora import __version__
+from corrobora.evidence_scope import build_evidence_scope
+from corrobora.id_utils import assign_display_labels
+from corrobora.playbooks import apply_playbook
+from corrobora.rule_metrics import build_rule_metrics, build_tuning_recommendations
+from corrobora.status import RunStatus
+from corrobora.telemetry import response_priority, summarize_telemetry
+from corrobora.tuning import load_tuning
+from corrobora.product import (
     CaseMetadata,
     CollectionManifest,
     CaseMetadataStore,
@@ -91,20 +91,20 @@ from triage_engine.product import (
 
 # Optional sigma — tolerate missing PyYAML gracefully
 try:
-    from triage_engine.sigma_loader import load_rules as load_sigma_rules
-    from triage_engine.sigma_runner import evaluate_rules as run_sigma_rules
+    from corrobora.sigma_loader import load_rules as load_sigma_rules
+    from corrobora.sigma_runner import evaluate_rules as run_sigma_rules
 
     SIGMA_AVAILABLE = True
 except Exception:
     SIGMA_AVAILABLE = False
 
 
-INVESTIGATION_TIMEOUT_ENV = "TRIAGE_INVESTIGATION_TIMEOUT_SECONDS"
-DETECTOR_TIMEOUT_ENV = "TRIAGE_DETECTOR_TIMEOUT_SECONDS"
-DETECTOR_EXECUTOR_ENV = "TRIAGE_DETECTOR_EXECUTOR"
+INVESTIGATION_TIMEOUT_ENV = "CORROBORA_INVESTIGATION_TIMEOUT_SECONDS"
+DETECTOR_TIMEOUT_ENV = "CORROBORA_DETECTOR_TIMEOUT_SECONDS"
+DETECTOR_EXECUTOR_ENV = "CORROBORA_DETECTOR_EXECUTOR"
 DEFAULT_INVESTIGATION_TIMEOUT_SECONDS = 1800
 DEFAULT_DETECTOR_TIMEOUT_SECONDS = 30
-SERVICE_LOGGER = logging.getLogger("triage.service")
+SERVICE_LOGGER = logging.getLogger("corrobora.service")
 
 
 # ---------------------------------------------------------------------------
@@ -1825,7 +1825,7 @@ def run_investigation(
         publish_sources()
         bundle_path = request.artifact_bundle or (request.input_source if request.input_mode == "artifact_bundle" else None)
         if request.input_mode == "live" and request.collect_live_artifacts and not bundle_path:
-            from triage_engine.live_artifacts import collect_live_artifacts, is_elevated
+            from corrobora.live_artifacts import collect_live_artifacts, is_elevated
             if is_elevated():
                 rpt.on_stage("acquire", "Copying Prefetch, scheduled tasks and registry hives from this computer")
                 live_staging = Path(case_path) / f".live-artifacts-{run_id[:8]}"
@@ -2128,7 +2128,7 @@ def run_investigation(
         # EVTX-only and artifact-only cases are unchanged.
         relationships: list = []
         relationship_coverage: Dict[str, Any] = {}
-        correlation_enabled = os.environ.get("TRIAGE_FORENSIC_CORRELATION", "1").strip() != "0"
+        correlation_enabled = os.environ.get("CORROBORA_FORENSIC_CORRELATION", "1").strip() != "0"
         if forensic and events and correlation_enabled:
             relationships, relationship_coverage = correlate_evidence(events, forensic.observations, ntfs=forensic.ntfs)
             # Service and task events are logged by default; link them to the binaries they name.
@@ -2504,7 +2504,7 @@ def run_investigation(
 
         stage = "analysis_manifest"
         _check_timeout(stage)
-        component_paths = [str(path) for package in ("detectors", "parser", "models", "correlation", "reporting", "triage_engine")
+        component_paths = [str(path) for package in ("detectors", "parser", "models", "correlation", "reporting", "corrobora")
                            for path in (Path(ROOT_DIR) / package).glob("*.py")]
         component_paths.extend(tuning_paths)
         component_paths.append(ioc_path)
@@ -2522,7 +2522,7 @@ def run_investigation(
                            "no_fp_filter": request.no_fp_filter, "tuning": tuning_config,
                            "live_channels": request.channels or [], "since_minutes": request.since_minutes,
                            "detector_timeout_seconds": detector_timeout_seconds,
-                           "demo_redaction": os.environ.get("TRIAGE_DEMO_REDACTION", "")},
+                           "demo_redaction": os.environ.get("CORROBORA_DEMO_REDACTION", "")},
             component_files=component_paths, engine_version=__version__, partial_failures=partial_failures,
             collection_warnings=collection_warnings)
         artifacts["analysis_manifest"] = os.path.join(case_path, "analysis_manifest.json")

@@ -14,7 +14,7 @@ function setNavigationState(page) {
   document.getElementById('workspace-nav').classList.remove('mobile-open');
   document.querySelector('.mobile-menu').setAttribute('aria-expanded', 'false');
   document.getElementById('main-content').focus({preventScroll:true});
-  document.title = `Triage Engine · ${page === 'case-detail' ? 'Investigation' : ({dashboard:'Overview',queue:'Review queue',investigate:'New investigation',jobs:'Jobs','quick-check':'Quick Check'}[page] || 'Workspace')}`;
+  document.title = `Corrobora · ${page === 'case-detail' ? 'Investigation' : ({dashboard:'Overview',queue:'Review queue',investigate:'New investigation',jobs:'Jobs','quick-check':'Quick Check'}[page] || 'Workspace')}`;
 }
 
 function toggleNavigation() {

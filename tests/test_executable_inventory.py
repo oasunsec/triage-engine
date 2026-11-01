@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from triage_engine.executable_inventory import build_executable_inventory, command_target, volume_path
+from corrobora.executable_inventory import build_executable_inventory, command_target, volume_path
 from tests.test_ntfs_artifacts import FILE_TIME, ROOT, T0, evidence, mft_record, ref, standard_records, times
 
 VOLUME = "\\VOLUME{01db0a051da1d5cd-801db9b9}"

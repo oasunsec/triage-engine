@@ -1,15 +1,15 @@
 /* Browser acceptance checks. Run only against an isolated test server.
-   Requires playwright, TRIAGE_E2E_URL, TRIAGE_E2E_USERNAME, TRIAGE_E2E_PASSWORD.
-   Set TRIAGE_E2E_ALLOW_BOOTSTRAP=1 only on a disposable first-run database. */
+   Requires playwright, CORROBORA_E2E_URL, CORROBORA_E2E_USERNAME, CORROBORA_E2E_PASSWORD.
+   Set CORROBORA_E2E_ALLOW_BOOTSTRAP=1 only on a disposable first-run database. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { chromium } = require(process.env.TRIAGE_PLAYWRIGHT_MODULE || 'playwright');
-const url = process.env.TRIAGE_E2E_URL;
-const username = process.env.TRIAGE_E2E_USERNAME;
-const password = process.env.TRIAGE_E2E_PASSWORD;
-if (!url || !username || !password) throw new Error('Set the three TRIAGE_E2E_* connection variables for an isolated test server.');
-const output = path.resolve(process.env.TRIAGE_E2E_OUTPUT || 'output/workspace-check');
+const { chromium } = require(process.env.CORROBORA_PLAYWRIGHT_MODULE || 'playwright');
+const url = process.env.CORROBORA_E2E_URL;
+const username = process.env.CORROBORA_E2E_USERNAME;
+const password = process.env.CORROBORA_E2E_PASSWORD;
+if (!url || !username || !password) throw new Error('Set the three CORROBORA_E2E_* connection variables for an isolated test server.');
+const output = path.resolve(process.env.CORROBORA_E2E_OUTPUT || 'output/workspace-check');
 fs.mkdirSync(output,{recursive:true});
 
 (async()=>{
@@ -23,7 +23,7 @@ fs.mkdirSync(output,{recursive:true});
     await page.locator('#auth-overlay:not(.hidden)').waitFor();
     await page.screenshot({path:path.join(output,'login.png')});
     if ((await page.locator('#auth-title').innerText()).includes('First Admin')) {
-      assert.equal(process.env.TRIAGE_E2E_ALLOW_BOOTSTRAP,'1','Bootstrap requires an explicitly disposable server');
+      assert.equal(process.env.CORROBORA_E2E_ALLOW_BOOTSTRAP,'1','Bootstrap requires an explicitly disposable server');
     }
     await page.locator('#auth-username').fill(username);
     await page.locator('#auth-password').fill(password);

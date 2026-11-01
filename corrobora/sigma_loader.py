@@ -7,8 +7,8 @@ from typing import Iterable, List, Tuple
 
 import yaml
 
-from triage_engine.sigma_mapper import split_modifier, supported_field
-from triage_engine.sigma_runner import _parse_condition, _tokenize, _validate_selection
+from corrobora.sigma_mapper import split_modifier, supported_field
+from corrobora.sigma_runner import _parse_condition, _tokenize, _validate_selection
 
 
 def _iter_rule_files(paths: Iterable[str]) -> Iterable[str]:

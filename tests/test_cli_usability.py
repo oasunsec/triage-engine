@@ -4,8 +4,8 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from triage_engine import cli
-from triage_engine.service import InvestigationResult
+from corrobora import cli
+from corrobora.service import InvestigationResult
 
 
 class CliUsabilityTests(unittest.TestCase):

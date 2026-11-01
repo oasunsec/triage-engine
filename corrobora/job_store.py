@@ -1,7 +1,7 @@
 """Durable job persistence backed by SQLite.
 
 Jobs survive server restarts.  The database file lives at
-``<TRIAGE_DATA_DIR>/jobs.db`` (default ``<project_root>/data/jobs.db``) and is
+``<CORROBORA_DATA_DIR>/jobs.db`` (default ``<project_root>/data/jobs.db``) and is
 auto-created on first use.
 """
 
@@ -15,17 +15,17 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from triage_engine.db_migrate import add_column_if_missing, run_migrations
+from corrobora.db_migrate import add_column_if_missing, run_migrations
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _resolve_data_dir() -> str:
-    configured = str(os.environ.get("TRIAGE_DATA_DIR", "") or "").strip()
+    configured = str(os.environ.get("CORROBORA_DATA_DIR", "") or "").strip()
     if not configured:
         if getattr(sys, "frozen", False):
             local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
-            return os.path.abspath(os.path.join(local_app_data, "TriageEngine", "data"))
+            return os.path.abspath(os.path.join(local_app_data, "Corrobora", "data"))
         return os.path.join(_PROJECT_ROOT, "data")
     expanded = os.path.expanduser(configured)
     if os.path.isabs(expanded):

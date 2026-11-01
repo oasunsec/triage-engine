@@ -1,5 +1,5 @@
 import unittest
-from triage_engine.telemetry import summarize_telemetry
+from corrobora.telemetry import summarize_telemetry
 
 
 class TelemetryReadableChannelTests(unittest.TestCase):

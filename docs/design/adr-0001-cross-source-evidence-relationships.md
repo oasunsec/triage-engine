@@ -27,9 +27,9 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
 ## Decision
 
 1. **Keep the flat module layout.** The forensic adapters already live as
-   `triage_engine/*_artifacts.py`. Moving them into `triage_engine/forensics/`
+   `corrobora/*_artifacts.py`. Moving them into `corrobora/forensics/`
    now would rename tested modules for no behaviour gain. Add
-   `triage_engine/forensic_correlation.py` alongside them. Revisit the package
+   `corrobora/forensic_correlation.py` alongside them. Revisit the package
    split when a fourth adapter family arrives.
 2. **Relationships are a separate, versioned record** (`schema_version` 1.0),
    written to `evidence_relationships.json` and mirrored (first 500) in
@@ -65,7 +65,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
    Cross-source findings are kept out of deduplication, attack chains and
    incident building, so links alone cannot create incidents.
 6. **Feature flag:** linking runs only when both event records and an artifact
-   bundle are supplied. `TRIAGE_FORENSIC_CORRELATION=0` disables it.
+   bundle are supplied. `CORROBORA_FORENSIC_CORRELATION=0` disables it.
    EVTX-only `findings.json` gains no new keys. Every case now writes an
    `evidence_relationships.json` (empty when not evaluated) so a rerun never
    leaves a stale file. Older cases without it remain exportable.
@@ -88,7 +88,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
    `003_evidence_link_reviews`), keyed by case and the deterministic link ID, so
    they survive reruns. Decisions about links a rerun no longer produces are
    returned as `orphaned_reviews` rather than dropped. Engine output files are
-   never edited. Routes are in `triage_engine/forensic_api.py`, mounted from
+   never edited. Routes are in `corrobora/forensic_api.py`, mounted from
    `server.py`: viewers read, analysts/admins decide, the existing CSRF
    middleware covers PATCH/POST, actors come from the session (never the
    request body), and every change is audited and kept in review history.
@@ -96,7 +96,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
    The dashboard gains an Evidence tab (`static/forensics.js`) shown for cases
    with artifacts: coverage, links with decisions and history, hypotheses, and
    the observation explorer.
-10. **Raw Task Scheduler XML** (`triage_engine/task_xml_artifacts.py`, bundle
+10. **Raw Task Scheduler XML** (`corrobora/task_xml_artifacts.py`, bundle
     member kind `scheduled_task_xml`, CLI `pack-artifacts --task-xml`). Files
     are decoded as UTF-16 or UTF-8 and capped at 1 MiB. Any DOCTYPE or ENTITY
     declaration is rejected before parsing, and actions/triggers are bounded.
@@ -108,13 +108,13 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
 
 ### Registry hive slice (2026-10-17)
 
-11. **Native offline registry hive parser** (`triage_engine/registry_hive_artifacts.py`,
+11. **Native offline registry hive parser** (`corrobora/registry_hive_artifacts.py`,
     bundle member kind `registry_hive` with a declared `hive_type` of `ntuser`,
     `software`, `system` or `amcache`; CLI `pack-artifacts --registry-hive
     --hive-type`). The parser is written from the public regf layout (base block,
     hbin, nk/vk/lf/lh/li/ri/db cells); no third-party parser code is copied or
     linked. It reads bytes only, never loads a hive through Windows APIs, and
-    never writes the input. Bounds: 256 MiB per hive (`TRIAGE_MAX_HIVE_BYTES`),
+    never writes the input. Bounds: 256 MiB per hive (`CORROBORA_MAX_HIVE_BYTES`),
     1 GiB of hives per bundle (a budget separate from the 64 MiB for other
     members), 200,000 subkeys and 65,536 values per key, 1 MiB per value, path
     depth 64, and a cell-visit budget. Each cell offset must fall inside an
@@ -141,7 +141,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
 
 ### Prefetch binary slice (2026-10-17)
 
-12. **Native Prefetch binaries** (`triage_engine/prefetch_binary.py`, existing
+12. **Native Prefetch binaries** (`corrobora/prefetch_binary.py`, existing
     member kind `prefetch_source`). SCCA versions 17, 23, 26 and 30/31 are
     parsed, including the Windows 10+ `MAM` container. Its LZXPRESS Huffman
     decoder is a clean-room implementation of [MS-XCA] section 2.2.4; no
@@ -160,7 +160,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
 
 ### File-system chronology slice (2026-10-17)
 
-13. **NTFS $MFT and $UsnJrnl:$J** (`triage_engine/ntfs_artifacts.py`, bundle
+13. **NTFS $MFT and $UsnJrnl:$J** (`corrobora/ntfs_artifacts.py`, bundle
     member kinds `ntfs_mft` and `ntfs_usn_journal`, CLI `pack-artifacts
     --ntfs-mft/--ntfs-usn-journal/--ntfs-volume`). One volume per bundle.
     Both files are hashed and parsed as streams and re-hashed during parsing, so
@@ -196,7 +196,7 @@ uncommitted forensic foundation and expansion work from 2–3 October. Python
     creation are contradictions, never proof. A file record at the path is
     context only: `ntfs_file` links never qualify a cross-source finding. A
     journal-creation link counts as the independent `file_system` family.
-15. **Executable inventory** (`triage_engine/executable_inventory.py`, case
+15. **Executable inventory** (`corrobora/executable_inventory.py`, case
     file `executable_inventory.json`). Links are event-anchored, so a host
     without process-creation telemetry got nothing from its artifacts. The
     inventory joins observations per volume-relative executable path and

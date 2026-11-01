@@ -11,9 +11,9 @@ import pytest
 
 from models.event_model import NormalizedEvent
 from reporting.json_export import export_raw_events_stream
-from triage_engine import cli, service
-from triage_engine.evidence import bind_event_sources, capture_evidence, sha256_file, write_analysis_manifest
-from triage_engine.forensic_artifacts import read_forensic_bundle
+from corrobora import cli, service
+from corrobora.evidence import bind_event_sources, capture_evidence, sha256_file, write_analysis_manifest
+from corrobora.forensic_artifacts import read_forensic_bundle
 
 
 def make_bundle(folder, command="C:\\Windows\\System32\\notepad.exe", **overrides):
@@ -133,7 +133,7 @@ def test_evidence_capture_retains_exact_bytes_and_stable_event_locator(tmp_path)
 
 
 def test_lossless_stream_keeps_repeated_script_records_and_xml(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRIAGE_DEMO_REDACTION", "1")
+    monkeypatch.setenv("CORROBORA_DEMO_REDACTION", "1")
     events = [NormalizedEvent(4104, datetime.now(timezone.utc), computer="CodexSandboxPrivate",
                               event_data={"ScriptBlockText": "Write-Output hello", "ScriptBlockId": "same"},
                               command_line_value="  exact command  ", share_name_value="  exact share  ",
@@ -198,7 +198,7 @@ def test_artifact_only_pipeline_and_resume_preserve_sources_and_runs(tmp_path):
     for output in first_manifest["outputs"]:
         assert sha256_file(case / output["snapshot_path"]) == output["sha256"]
     assert "Observed Persistence Configuration" in Path(result.artifacts["report"]).read_text()
-    from triage_engine.product import export_case_bundle, verify_case_bundle
+    from corrobora.product import export_case_bundle, verify_case_bundle
     archive = export_case_bundle(result.case_path, str(tmp_path / "evidence.zip"), include_sources=True)
     assert verify_case_bundle(archive)["valid"]
 
@@ -266,7 +266,7 @@ def test_parser_warning_and_skipped_sigma_rule_make_analysis_partial(tmp_path):
 def test_job_startup_reconciles_running_case_and_preserves_input(tmp_path, monkeypatch):
     import asyncio
     import server
-    from triage_engine import job_store
+    from corrobora import job_store
     data = tmp_path / "state"
     data.mkdir()
     monkeypatch.setattr(job_store, "_DB_DIR", str(data))
@@ -312,7 +312,7 @@ def test_deduplicated_alert_retains_each_source_locator():
 
 
 def test_separate_snapshot_records_retain_separate_signal_identity(tmp_path):
-    from triage_engine.adapters import alerts_to_signals_findings
+    from corrobora.adapters import alerts_to_signals_findings
     folder, manifest = make_bundle(tmp_path / "snapshot", "powershell.exe -enc QQ==")
     path = folder / "persistence.json"
     data = json.loads(path.read_text())
@@ -328,7 +328,7 @@ def test_separate_snapshot_records_retain_separate_signal_identity(tmp_path):
 
 
 def test_failed_rerun_cannot_export_mixed_outputs(tmp_path):
-    from triage_engine.product import export_case_bundle
+    from corrobora.product import export_case_bundle
     bundle, _ = make_bundle(tmp_path / "input")
     request = service.InvestigationRequest(str(bundle), input_mode="artifact_bundle", case_name="same", cases_dir=str(tmp_path / "cases"))
     result = service.run_investigation(request)

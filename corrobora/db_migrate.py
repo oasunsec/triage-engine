@@ -1,4 +1,4 @@
-"""Minimal SQLite schema migration helpers for triage engine stores."""
+"""Minimal SQLite schema migration helpers for Corrobora stores."""
 
 from __future__ import annotations
 

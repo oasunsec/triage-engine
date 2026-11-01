@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from parser import evtx_reader
-from triage_engine.cli import _apply_parse_progress_update, _public_parse_progress
+from corrobora.cli import _apply_parse_progress_update, _public_parse_progress
 
 
 class ParserParallelTests(unittest.TestCase):

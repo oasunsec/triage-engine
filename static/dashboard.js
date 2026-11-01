@@ -547,7 +547,7 @@ async function establishQuickCheckSession() {
 
 async function quickJSON(path, options = {}) {
   if (!quickCheckToken) throw new Error('Quick Check is unavailable. Refresh the page and try again.');
-  const headers = Object.assign({}, options.headers || {}, { 'X-Triage-Quick-Token': quickCheckToken });
+  const headers = Object.assign({}, options.headers || {}, { 'X-Corrobora-Quick-Token': quickCheckToken });
   if (authState.csrfToken) headers['X-CSRF-Token'] = authState.csrfToken;
   const response = await fetch(API + path, Object.assign({ credentials: 'same-origin' }, options, { headers }));
   const payload = await response.json().catch(() => ({}));
@@ -2147,7 +2147,7 @@ async function startQuickCheck() {
   try {
     const health = await loadQuickCheckLiveHealth();
     if (!health?.is_windows) {
-      setQuickCheckStatus('Live checks are available only when Triage Engine runs on Windows. You can still use existing event log files.', 'warn');
+      setQuickCheckStatus('Live checks are available only when Corrobora runs on Windows. You can still use existing event log files.', 'warn');
       return;
     }
     if (!health.pywin32_available) {
@@ -2177,7 +2177,7 @@ async function requestQuickCheckElevation() {
       await queueQuickCheck();
       return;
     }
-    setQuickCheckStatus('Windows is asking for administrator permission. After you approve, the elevated Triage Engine window will open automatically. If you choose No, use Event Log Files instead.', 'warn');
+    setQuickCheckStatus('Windows is asking for administrator permission. After you approve, the elevated Corrobora window will open automatically. If you choose No, use Event Log Files instead.', 'warn');
     await waitForElevatedDashboard(response.redirect_url);
   } catch (e) {
     setQuickCheckStatus(e.message || 'Windows could not request administrator permission. You can use Event Log Files instead.', 'error');
@@ -2286,7 +2286,7 @@ function openQuickCheckTechnicalDetails(caseName) {
 async function downloadQuickCheckBundle(caseName) {
   try {
     if (!quickCheckToken) throw new Error('Quick Check session has expired. Refresh the page and try again.');
-    const headers = { 'X-Triage-Quick-Token': quickCheckToken };
+    const headers = { 'X-Corrobora-Quick-Token': quickCheckToken };
     if (authState.csrfToken) headers['X-CSRF-Token'] = authState.csrfToken;
     const response = await fetch(API + '/api/quick/cases/' + encodeURIComponent(caseName) + '/bundle', {
       method: 'POST', credentials: 'same-origin', headers,

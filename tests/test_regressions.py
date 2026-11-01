@@ -12,16 +12,16 @@ from correlation.incident_builder import build_incidents
 from detectors import behavioral, credential_access, defense_evasion, lateral_movement, persistence, powershell_script
 from models.event_model import NormalizedEvent
 from reporting.json_export import export_case
-from triage_engine.adapters import alerts_to_signals_findings
-from triage_engine.cli import main as cli_main
-from triage_engine.export_sanitizer import apply_demo_redaction_data, sanitize_export_data
+from corrobora.adapters import alerts_to_signals_findings
+from corrobora.cli import main as cli_main
+from corrobora.export_sanitizer import apply_demo_redaction_data, sanitize_export_data
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLE_ROOT = Path(os.environ.get("TRIAGE_SAMPLE_ROOT", ROOT / "sample_cache"))
-MALICIOUS_EVTX_DIR = Path(os.environ.get("TRIAGE_MALICIOUS_EVTX_DIR", SAMPLE_ROOT / "logs"))
-CLEAN_EVTX_DIR = Path(os.environ.get("TRIAGE_CLEAN_EVTX_DIR", SAMPLE_ROOT / "triage-logs"))
-ATTACK_SAMPLE_DIR = Path(os.environ.get("TRIAGE_ATTACK_SAMPLE_DIR", SAMPLE_ROOT / "EVTX Sample"))
+SAMPLE_ROOT = Path(os.environ.get("CORROBORA_SAMPLE_ROOT", ROOT / "sample_cache"))
+MALICIOUS_EVTX_DIR = Path(os.environ.get("CORROBORA_MALICIOUS_EVTX_DIR", SAMPLE_ROOT / "logs"))
+CLEAN_EVTX_DIR = Path(os.environ.get("CORROBORA_CLEAN_EVTX_DIR", SAMPLE_ROOT / "triage-logs"))
+ATTACK_SAMPLE_DIR = Path(os.environ.get("CORROBORA_ATTACK_SAMPLE_DIR", SAMPLE_ROOT / "EVTX Sample"))
 SAMPLE_CACHE_DIR = ROOT / "sample_cache"
 ATOMIC_REPO_SETS_DIR = SAMPLE_CACHE_DIR / "atomic_repo_sets"
 DEEPBLUE_AUDIT_DIR = SAMPLE_CACHE_DIR / "deepblue_audit"
@@ -181,7 +181,7 @@ GUEST_ADMINS_SAMPLE = SAMPLE_CACHE_DIR / "evtx_guest_added_to_admins_4732.evtx"
 QUICK_LOCAL_GROUP_CHURN_SAMPLE = SAMPLE_CACHE_DIR / "mitre_quick_local_group_churn.evtx"
 LOCAL_SAM_ADMIN_SAMPLE = Path(
     os.environ.get(
-        "TRIAGE_LOCAL_SAM_ADMIN_SAMPLE",
+        "CORROBORA_LOCAL_SAM_ADMIN_SAMPLE",
         ATTACK_SAMPLE_DIR / "Persistence" / "sysmon_local_account_creation_and_added_admingroup_12_13.evtx",
     )
 )
@@ -537,7 +537,7 @@ class PowerShellRegressionTests(unittest.TestCase):
 
         with mock.patch.dict(
             os.environ,
-            {"TRIAGE_DEMO_REDACTION": "1", "TRIAGE_DEMO_REDACTION_VALUES": "host-encoded"},
+            {"CORROBORA_DEMO_REDACTION": "1", "CORROBORA_DEMO_REDACTION_VALUES": "host-encoded"},
             clear=False,
         ):
             redacted = apply_demo_redaction_data(payload)

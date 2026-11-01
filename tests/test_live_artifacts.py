@@ -9,8 +9,8 @@ from pathlib import Path
 from tests.test_prefetch_binary import build_scca
 from tests.test_registry_hive_artifacts import HiveWriter, system_spec
 from tests.test_task_xml_artifacts import task_xml
-from triage_engine.forensic_artifacts import read_forensic_bundle
-from triage_engine.live_artifacts import collect_live_artifacts
+from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.live_artifacts import collect_live_artifacts
 
 OBSERVED = "2026-11-01T02:00:00+00:00"
 

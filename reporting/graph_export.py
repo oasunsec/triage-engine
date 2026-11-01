@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Dict
 
-from triage_engine.export_sanitizer import sanitize_export_data
+from corrobora.export_sanitizer import sanitize_export_data
 
 
 def export(graph_data: Dict, filepath: str) -> Dict:

@@ -63,15 +63,15 @@ class HiveError(ValueError):
 
 
 def max_hive_bytes() -> int:
-    value = os.environ.get("TRIAGE_MAX_HIVE_BYTES", "")
+    value = os.environ.get("CORROBORA_MAX_HIVE_BYTES", "")
     if not value:
         return DEFAULT_MAX_HIVE_BYTES
     try:
         limit = int(value)
     except ValueError as exc:
-        raise ValueError("TRIAGE_MAX_HIVE_BYTES must be an integer") from exc
+        raise ValueError("CORROBORA_MAX_HIVE_BYTES must be an integer") from exc
     if limit < _BASE:
-        raise ValueError("TRIAGE_MAX_HIVE_BYTES is too small for a hive")
+        raise ValueError("CORROBORA_MAX_HIVE_BYTES is too small for a hive")
     return limit
 
 
@@ -502,7 +502,7 @@ def parse_registry_hive(content: bytes, *, hive_type: str, source_name: str, sou
         raise ValueError(f"Unsupported hive type {hive_type!r}")
     replay_report = None
     if logs:
-        from triage_engine.registry_log_replay import replay
+        from corrobora.registry_log_replay import replay
         content, replay_report = replay(content, logs)
     hive = Hive(content, max_bytes=max_bytes)
     builder = _Builder(hive, hive_type=hive_type, source_name=source_name, source_sha256=source_sha256, host=host,

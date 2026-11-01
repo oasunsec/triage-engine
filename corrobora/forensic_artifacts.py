@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from models.event_model import Alert
-from triage_engine.path_safety import is_link_or_reparse, reject_path_links
+from corrobora.path_safety import is_link_or_reparse, reject_path_links
 
 KINDS = {"registry_run": "T1547.001", "scheduled_task": "T1053.005", "service": "T1543.003"}
 NTFS_KINDS = {"ntfs_mft", "ntfs_usn_journal"}
@@ -157,14 +157,14 @@ def read_forensic_bundle(
         if large_ntfs and size > NTFS_LARGE_LIMIT:
             raise ValueError("NTFS artifact exceeds the 8 GiB member limit")
         if item["kind"] == "registry_hive_log":
-            from triage_engine.registry_hive_artifacts import max_hive_bytes
+            from corrobora.registry_hive_artifacts import max_hive_bytes
             if not isinstance(item.get("hive_member"), str) or item.get("log_slot") not in {"LOG1", "LOG2"}:
                 raise ValueError("Registry hive log member requires hive_member and log_slot LOG1 or LOG2")
             hive_total += size
             if size > max_hive_bytes() or hive_total > MAX_HIVE_BUNDLE_BYTES:
                 raise ValueError("Registry hive byte budget exceeded")
         elif item["kind"] == "registry_hive":
-            from triage_engine.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
+            from corrobora.registry_hive_artifacts import HIVE_TYPES, max_hive_bytes
             if item.get("hive_type") not in HIVE_TYPES:
                 raise ValueError("Registry hive member requires hive_type ntuser, software, system or amcache")
             hive_total += size
@@ -217,7 +217,7 @@ def read_forensic_bundle(
         volumes = {member[3]["volume"].upper() for member in ntfs_members.values() if "volume" in member[3]}
         if len(volumes) > 1:
             raise ValueError("$MFT and USN journal members name different volumes")
-        from triage_engine.ntfs_artifacts import read_ntfs_members
+        from corrobora.ntfs_artifacts import read_ntfs_members
         selected = {kind: member[:3] for kind, member in ntfs_members.items()}
         ntfs, parsed, warnings = read_ntfs_members(
             host=host, observed_at=observed_at.isoformat(), collector=collector, volume=next(iter(volumes), ""),
@@ -230,7 +230,7 @@ def read_forensic_bundle(
         if item["kind"] in NTFS_KINDS:
             continue  # Parsed above from the streamed members.
         if item["kind"] == "prefetch_source":
-            from triage_engine.prefetch_binary import parse_prefetch_binary
+            from corrobora.prefetch_binary import parse_prefetch_binary
             # A damaged or unsupported .pf stays retained and makes the analysis partial.
             try:
                 parsed, warnings = parse_prefetch_binary(
@@ -241,13 +241,13 @@ def read_forensic_bundle(
             observations.extend(parsed)
             adapter_warnings.extend(warnings)
         elif item["kind"] == "chromium_history":
-            from triage_engine.browser_artifacts import parse_chromium_downloads
+            from corrobora.browser_artifacts import parse_chromium_downloads
             parse_temp = Path(temp_dir) if temp_dir is not None else Path(__file__).resolve().parents[1] / "runtime" / "temp" / "artifact-parsers"
             reject_path_links(parse_temp, "Artifact parser temporary path cannot use links or junctions")
             parse_temp.mkdir(parents=True, exist_ok=True)
             observations.extend(parse_chromium_downloads(content_bytes, temp_dir=parse_temp, **context))
         elif item["kind"] == "scheduled_task_xml":
-            from triage_engine.task_xml_artifacts import parse_task_xml
+            from corrobora.task_xml_artifacts import parse_task_xml
             parsed, warnings = parse_task_xml(content_bytes, original_name=str(item.get("original_name", "")), **context)
             observations.extend(parsed)
             adapter_warnings.extend(warnings)
@@ -258,7 +258,7 @@ def read_forensic_bundle(
         elif item["kind"] == "registry_hive_log":
             continue  # Replayed with the hive it names.
         elif item["kind"] == "registry_hive":
-            from triage_engine.registry_hive_artifacts import parse_registry_hive
+            from corrobora.registry_hive_artifacts import parse_registry_hive
             hive_logs = [log_bytes for _, _, _, log_bytes, log_item in verified
                          if log_item["kind"] == "registry_hive_log" and log_item.get("hive_member") == item["path"]]
             parsed, warnings = parse_registry_hive(content_bytes, hive_type=item["hive_type"],
@@ -268,7 +268,7 @@ def read_forensic_bundle(
             adapter_warnings.extend(warnings)
             alerts.extend(alert for alert in map(_configuration_alert, parsed) if alert is not None)
         elif item["kind"] == "pecmd_jsonl":
-            from triage_engine.prefetch_artifacts import parse_pecmd_jsonl
+            from corrobora.prefetch_artifacts import parse_pecmd_jsonl
             exporter = item.get("exporter")
             if not isinstance(exporter, dict):
                 raise ValueError("PECmd input requires exporter name and version")

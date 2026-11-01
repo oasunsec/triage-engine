@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from triage_engine.cli import main
-from triage_engine.tuning import load_tuning
+from corrobora.cli import main
+from corrobora.tuning import load_tuning
 
 
 class TuningBootstrapTests(unittest.TestCase):

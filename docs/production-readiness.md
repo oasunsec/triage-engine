@@ -30,7 +30,7 @@ The script writes `audit-artifacts/production_readiness.json`. It reports one of
 ## Tune false positives
 
 1. Choose 3–5 clean EVTX cases from the environment.
-2. Run `triage investigate` with the current tuning.
+2. Run `corrobora investigate` with the current tuning.
 3. Review `summary.txt`, `incident_brief.md`, and `findings.json`.
 4. For large cases, use `raw_events.jsonl` for the full event stream. The raw tab in `report.html` is a preview.
 5. Watch `run_status.json` during large folder runs. `parse_profile` shows the file set and executor. `parse_progress` shows file-by-file progress.

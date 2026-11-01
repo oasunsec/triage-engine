@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from triage_engine.user_utils import add_user_identity_fields
+from corrobora.user_utils import add_user_identity_fields
 
 
 def _iso(ts: Optional[datetime]) -> Optional[str]:

@@ -1,6 +1,6 @@
 # Windows packaging
 
-Triage Engine ships as a local-first Windows application with two distribution forms:
+Corrobora ships as a local-first Windows application with two distribution forms:
 
 - **Portable**: a PyInstaller one-directory payload that can be copied to a field laptop or removable media.
 - **Installer**: an Inno Setup installer built from the same portable payload.
@@ -17,7 +17,7 @@ python -m pip install pyinstaller
 .\scripts\build-windows.ps1 -Clean
 ```
 
-The portable payload is written to `dist-windows/portable/TriageEngine`. To also create the installer, install Inno Setup and run:
+The portable payload is written to `dist-windows/portable/Corrobora`. To also create the installer, install Inno Setup and run:
 
 ```powershell
 .\scripts\build-windows.ps1 -Clean -BuildInstaller
@@ -27,9 +27,9 @@ The build script uses `ISCC.exe` from `PATH` or the standard per-user/machine In
 
 ## Running
 
-Run `launch-triage.ps1` from the payload directory. It sets `TRIAGE_HOST=127.0.0.1`, chooses an available durable data location, starts the bundled `TriageEngine.exe`, and opens the browser. `-NoBrowser` is useful for scripted smoke tests and `-Wait` keeps the launcher attached.
+Run `launch-corrobora.ps1` from the payload directory. It sets `CORROBORA_HOST=127.0.0.1`, chooses an available durable data location, starts the bundled `Corrobora.exe`, and opens the browser. `-NoBrowser` is useful for scripted smoke tests and `-Wait` keeps the launcher attached.
 
-Installed mode uses `%ProgramData%\TriageEngine\data` and `%ProgramData%\TriageEngine\cases`. Portable mode defaults to `%LOCALAPPDATA%\TriageEngine\data` and `%LOCALAPPDATA%\TriageEngine\cases`; override either location with `TRIAGE_DATA_DIR` or `TRIAGE_CASES_DIR`.
+Installed mode uses `%ProgramData%\Corrobora\data` and `%ProgramData%\Corrobora\cases`. Portable mode defaults to `%LOCALAPPDATA%\Corrobora\data` and `%LOCALAPPDATA%\Corrobora\cases`; override either location with `CORROBORA_DATA_DIR` or `CORROBORA_CASES_DIR`.
 
 ### Quick Check
 
@@ -41,7 +41,7 @@ permission is declined, no live scan is started and the user can instead supply
 saved `.evtx` files to IT. The analyst console and generic case APIs remain
 authenticated.
 
-The launcher deliberately forces localhost even if a broader host was used during development. Do not expose the dashboard through a firewall rule or reverse proxy without applying the deployment hardening guidance. `launch-triage.ps1 -Elevated` is available for an explicitly administrator-run session; the Quick Check button requests elevation only when needed.
+The launcher deliberately forces localhost even if a broader host was used during development. Do not expose the dashboard through a firewall rule or reverse proxy without applying the deployment hardening guidance. `launch-corrobora.ps1 -Elevated` is available for an explicitly administrator-run session; the Quick Check button requests elevation only when needed.
 
 ## Collection options
 
@@ -54,7 +54,7 @@ WinRM, least-privilege, and host-allowlist policy before using remote mode.
 
 ## Upgrade and uninstall
 
-Inno Setup overwrites only files under `Program Files\Triage Engine`. The data and cases directories are created under `%ProgramData%` and are not listed in `[UninstallDelete]`. Therefore an upgrade preserves cases, jobs, reviews, users, and reports, and uninstall removes the executable payload while leaving evidence to survive uninstall for deliberate administrative cleanup.
+Inno Setup overwrites only files under `Program Files\Corrobora`. The data and cases directories are created under `%ProgramData%` and are not listed in `[UninstallDelete]`. Therefore an upgrade preserves cases, jobs, reviews, users, and reports, and uninstall removes the executable payload while leaving evidence to survive uninstall for deliberate administrative cleanup.
 
 ## Verification without build tools
 

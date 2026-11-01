@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$SysmonConfigPath = (Join-Path $PSScriptRoot "..\\config\\sysmon\\triage-sysmon-minimal.xml"),
+    [string]$SysmonConfigPath = (Join-Path $PSScriptRoot "..\\config\\sysmon\\corrobora-sysmon-minimal.xml"),
     [switch]$SkipSysmon,
     [switch]$SkipPowerShellLogging
 )

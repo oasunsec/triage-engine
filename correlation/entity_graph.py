@@ -6,8 +6,8 @@ import ipaddress
 from typing import Dict, List, Set
 
 from models.event_model import Finding, Incident, Signal
-from triage_engine.id_utils import stable_id
-from triage_engine.user_utils import normalize_user_identity
+from corrobora.id_utils import stable_id
+from corrobora.user_utils import normalize_user_identity
 
 NOISY_USERS = {
     "",

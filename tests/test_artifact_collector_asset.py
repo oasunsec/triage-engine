@@ -26,7 +26,7 @@ class WindowsArtifactCollectorAssetTests(unittest.TestCase):
         for writes_to_system in ("Remove-Item", "Set-ItemProperty", "New-ItemProperty", "reg add", "reg delete",
                                  "wevtutil cl", "wevtutil.exe cl", "Stop-Service", "fsutil usn deletejournal"):
             self.assertNotIn(writes_to_system, script)
-        for collected in ("Microsoft-Windows-Windows Defender/Operational", ".LOG1", "triage_engine.raw_ntfs",
+        for collected in ("Microsoft-Windows-Windows Defender/Operational", ".LOG1", "corrobora.raw_ntfs",
                           "pack-artifacts", "collection_manifest.json"):
             self.assertIn(collected, script)
 
@@ -38,11 +38,11 @@ class WindowsArtifactCollectorAssetTests(unittest.TestCase):
         parser_check = (
             "$tokens = $null; $errors = $null; "
             "[System.Management.Automation.Language.Parser]::ParseFile(" 
-            "$env:TRIAGE_COLLECTOR_SCRIPT, [ref]$tokens, [ref]$errors) | Out-Null; "
+            "$env:CORROBORA_COLLECTOR_SCRIPT, [ref]$tokens, [ref]$errors) | Out-Null; "
             "if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
         )
         environment = os.environ.copy()
-        environment["TRIAGE_COLLECTOR_SCRIPT"] = str(collector)
+        environment["CORROBORA_COLLECTOR_SCRIPT"] = str(collector)
         result = subprocess.run(
             [shell, "-NoProfile", "-NonInteractive", "-Command", parser_check],
             cwd=ROOT,

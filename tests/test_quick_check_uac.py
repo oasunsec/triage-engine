@@ -50,8 +50,8 @@ def test_elevated_server_launch_is_localhost_only_and_uses_uac():
     command = popen.call_args.args[0]
     assert command[:2] == ["powershell.exe", "-NoProfile"]
     script = command[-1]
-    assert "TRIAGE_HOST = '127.0.0.1'" in script
-    assert "TRIAGE_PORT = '41234'" in script
+    assert "CORROBORA_HOST = '127.0.0.1'" in script
+    assert "CORROBORA_PORT = '41234'" in script
     assert "-Verb RunAs" in script
 
 

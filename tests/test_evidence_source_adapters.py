@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from models.event_model import Alert, NormalizedEvent
 from parser import evtx_reader
-from triage_engine.adapters import alerts_to_signals_findings
+from corrobora.adapters import alerts_to_signals_findings
 
 
 ROOT = Path(__file__).resolve().parents[1]

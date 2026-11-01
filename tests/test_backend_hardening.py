@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from triage_engine.case_utils import resolve_case_path
+from corrobora.case_utils import resolve_case_path
 
 
 class CaseResolutionTests(unittest.TestCase):
@@ -86,8 +86,8 @@ class ClientAddressTests(unittest.TestCase):
 class BackendApiStateTests(unittest.TestCase):
     def setUp(self):
         import server
-        import triage_engine.auth_store as auth_store
-        import triage_engine.review_store as review_store
+        import corrobora.auth_store as auth_store
+        import corrobora.review_store as review_store
 
         self.server = server
         self.auth_store = auth_store
@@ -220,7 +220,7 @@ class BackendApiStateTests(unittest.TestCase):
 
 class BootstrapTransactionTests(unittest.TestCase):
     def test_bootstrap_admin_only_creates_one_user(self):
-        import triage_engine.auth_store as auth_store
+        import corrobora.auth_store as auth_store
 
         with tempfile.TemporaryDirectory() as temp_dir:
             original_db_path = auth_store._DB_PATH
@@ -240,7 +240,7 @@ class BootstrapTransactionTests(unittest.TestCase):
 class DetectorIsolationTests(unittest.TestCase):
     def test_builtin_detector_uses_cancellable_process_executor(self):
         from detectors import behavioral
-        from triage_engine.service import _run_detector_with_timeout
+        from corrobora.service import _run_detector_with_timeout
 
         result = _run_detector_with_timeout("behavioral", behavioral.detect, [], 10)
 
@@ -251,7 +251,7 @@ class DetectorIsolationTests(unittest.TestCase):
     def test_detector_list_reuses_one_spawn_pool_for_nonempty_input(self):
         from datetime import datetime, timezone
         from models.event_model import NormalizedEvent
-        from triage_engine.service import _run_detectors
+        from corrobora.service import _run_detectors
 
         partial_failures = []
         alerts, timings = _run_detectors(
@@ -280,7 +280,7 @@ if __name__ == "__main__":
 class BootstrapTokenTests(unittest.TestCase):
     def setUp(self):
         import server
-        import triage_engine.auth_store as auth_store
+        import corrobora.auth_store as auth_store
 
         self.server = server
         self.auth_store = auth_store

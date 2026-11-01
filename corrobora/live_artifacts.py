@@ -58,7 +58,7 @@ def collect_live_artifacts(
     copy_locked: Callable[[Path, Path], None] = _esentutl_copy,
 ) -> tuple[Optional[Path], list[dict]]:
     """Collect into ``staging`` (new) and package a bundle; return (bundle or None, steps)."""
-    from triage_engine.artifact_packager import pack_artifacts
+    from corrobora.artifact_packager import pack_artifacts
 
     system_root = Path(system_root or os.environ.get("SystemRoot", r"C:\Windows"))
     user_profile = Path(user_profile or os.path.expanduser("~"))
@@ -108,7 +108,7 @@ def collect_live_artifacts(
     for name, source, kind in hive_sources:
         step(f"hive:{name}", hive_copier(name, source, kind))
 
-    from triage_engine.forensic_artifacts import MAX_BUNDLE_MEMBERS
+    from corrobora.forensic_artifacts import MAX_BUNDLE_MEMBERS
 
     tasks = [str(path) for path in _files_under(tasks_dir) if not path.is_symlink()] if tasks_dir.is_dir() else []
     prefetch_files = sorted(prefetch_dir.glob("*.pf"), key=lambda path: path.stat().st_mtime, reverse=True) \

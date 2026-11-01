@@ -9,8 +9,8 @@ from unittest import mock
 from parser import live_reader
 from parser.live_reader import classify_live_channel_error
 import server
-from triage_engine import service
-from triage_engine.service import (
+from corrobora import service
+from corrobora.service import (
     InvestigationRequest,
     _apply_live_progress_update,
     _build_live_collection_summary,

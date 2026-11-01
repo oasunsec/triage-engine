@@ -56,4 +56,6 @@ def load_project_env(root_dir: str, explicit: Optional[str] = None) -> int:
         if path and path not in seen:
             seen.add(path)
             total += load_env_file(path)
+    from corrobora import adopt_legacy_environment
+    adopt_legacy_environment()  # .env files written before the rename use TRIAGE_*
     return total

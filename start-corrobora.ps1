@@ -22,8 +22,8 @@ Set-Location $repoRoot
 function Resolve-PythonSpec {
     $candidates = @()
 
-    if ($env:TRIAGE_PYTHON) {
-        $candidates += $env:TRIAGE_PYTHON
+    if ($env:CORROBORA_PYTHON) {
+        $candidates += $env:CORROBORA_PYTHON
     }
 
     $venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
@@ -59,7 +59,7 @@ function Resolve-PythonSpec {
         }
     }
 
-    throw "No Python runtime was found. Set TRIAGE_PYTHON, create .venv\Scripts\python.exe, or install Python 3.10+."
+    throw "No Python runtime was found. Set CORROBORA_PYTHON, create .venv\Scripts\python.exe, or install Python 3.10+."
 }
 
 function Invoke-Python {
@@ -99,7 +99,7 @@ function Invoke-Docker {
 
 if ($Mode -ne "docker") {
     $script:PythonSpec = Resolve-PythonSpec
-    $env:TRIAGE_RUNTIME_MODE = "local"
+    $env:CORROBORA_RUNTIME_MODE = "local"
 
     if ($BootstrapDeps) {
         Write-Host "Installing local project dependencies..."
@@ -111,7 +111,7 @@ if ($Mode -ne "docker") {
 
 switch ($Mode) {
     "server" {
-        Write-Host "Starting Triage Engine dashboard on http://$BindHost`:$Port"
+        Write-Host "Starting Corrobora dashboard on http://$BindHost`:$Port"
         Write-Host "If this is the first run, open the page and create the initial admin account."
 
         $args = @("server.py", "--host", $BindHost, "--port", $Port.ToString())
@@ -126,7 +126,7 @@ switch ($Mode) {
             throw "Mode 'investigate' requires -EvtxPath."
         }
 
-        $args = @("-m", "triage_engine.cli", "investigate", "--evtx", $EvtxPath)
+        $args = @("-m", "corrobora.cli", "investigate", "--evtx", $EvtxPath)
         if ($CaseName) {
             $args += @("--case", $CaseName)
         }
@@ -151,7 +151,7 @@ switch ($Mode) {
     }
 
     "docker" {
-        Write-Host "Starting Triage Engine with Docker Compose on http://127.0.0.1:8000"
+        Write-Host "Starting Corrobora with Docker Compose on http://127.0.0.1:8000"
         Write-Host "The dashboard runtime badge should show Docker after the page loads."
         $args = @("compose", "up", "--build")
         if ($Detach) {

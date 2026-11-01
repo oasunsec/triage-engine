@@ -1,4 +1,4 @@
-"""Release gate evaluator for triage engine readiness and competitive scorecards."""
+"""Release gate evaluator for Corrobora readiness and competitive scorecards."""
 
 from __future__ import annotations
 

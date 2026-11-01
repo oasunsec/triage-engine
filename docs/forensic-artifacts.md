@@ -29,14 +29,14 @@ and [command documentation](https://github.com/EricZimmerman/PECmd/blob/master/R
 
 ```powershell
 # On your analysis workstation, with your established PECmd installation and offline evidence:
-# This is a usage example; triage-engine does not install or run the external tool.
+# This is a usage example; corrobora does not install or run the external tool.
 PECmd.exe -d C:\Evidence\Prefetch --json C:\Evidence\Exports --jsonf prefetch.jsonl --dt "yyyy-MM-ddTHH:mm:ss.fffffffzzz"
 
 # Replace these paths, host, collection time, and version with the source evidence metadata.
 # The output parent must exist; the bundle itself must be new.
-python -m triage_engine.cli pack-artifacts --chromium-history C:\Evidence\Offline\History --pecmd-jsonl C:\Evidence\Exports\prefetch.jsonl --pecmd-version ACTUAL_VERSION --prefetch-source C:\Evidence\Prefetch\EXAMPLE.EXE-12345678.pf --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\execution-download-bundle
+python -m corrobora.cli pack-artifacts --chromium-history C:\Evidence\Offline\History --pecmd-jsonl C:\Evidence\Exports\prefetch.jsonl --pecmd-version ACTUAL_VERSION --prefetch-source C:\Evidence\Prefetch\EXAMPLE.EXE-12345678.pf --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\execution-download-bundle
 
-python -m triage_engine.cli investigate --artifacts .\runtime\output\execution-download-bundle --case execution-download
+python -m corrobora.cli investigate --artifacts .\runtime\output\execution-download-bundle --case execution-download
 ```
 
 Repeat input flags for multiple files. `--persistence-records` can combine the
@@ -72,7 +72,7 @@ and make processing partial. Exporter identity is declared, not attested, and
 retaining a `.pf` alongside JSONL does not prove that the export was derived from
 that binary. Corroborate it through your acquisition workflow.
 
-Native `.pf` files are parsed by `triage_engine/prefetch_binary.py` (collector
+Native `.pf` files are parsed by `corrobora/prefetch_binary.py` (collector
 `triage-prefetch-binary`): SCCA versions 17 (XP), 23 (Vista/7), 26 (8.1) and
 30/31 (10/11), uncompressed or in the Windows 10+ `MAM` container. The
 decompressor is written from Microsoft's
@@ -114,16 +114,16 @@ failures are recorded as warnings rather than silently becoming empty evidence.
 .\scripts\collect-windows-artifacts.ps1 -OutputDirectory .\runtime\output\endpoint-snapshot
 
 # Analyze the snapshot alone; this does not automatically select live collection.
-python -m triage_engine.cli investigate --artifacts .\runtime\output\endpoint-snapshot --case endpoint-persistence
+python -m corrobora.cli investigate --artifacts .\runtime\output\endpoint-snapshot --case endpoint-persistence
 
 # Supplement an offline event investigation.
-python -m triage_engine.cli investigate --evtx C:\Evidence\Events --artifacts C:\Evidence\Persistence --case endpoint-combined
+python -m corrobora.cli investigate --evtx C:\Evidence\Events --artifacts C:\Evidence\Persistence --case endpoint-combined
 
 # Export the current display/report artifacts and provenance manifests.
-python -m triage_engine.cli export --case endpoint-combined --zip --output .\runtime\output\endpoint-report.zip
+python -m corrobora.cli export --case endpoint-combined --zip --output .\runtime\output\endpoint-report.zip
 
 # Explicitly include unredacted retained sources and normalized record stream.
-python -m triage_engine.cli export --case endpoint-combined --zip --include-sources --output .\runtime\output\endpoint-evidence.zip
+python -m corrobora.cli export --case endpoint-combined --zip --include-sources --output .\runtime\output\endpoint-evidence.zip
 ```
 
 Use a new collector directory for each capture. The collector refuses to
@@ -142,7 +142,7 @@ links/junctions in member paths, unknown record kinds/fields, and inconsistent
 completeness declarations. Limits are 1 MiB for the manifest, 64 MiB of
 artifact bytes, 64 members, and 50,000 observations. General retained inputs are
 limited to 1,024 files and 4 GiB per capture batch; configure
-`TRIAGE_MAX_EVIDENCE_BYTES` explicitly for larger evidence sets.
+`CORROBORA_MAX_EVIDENCE_BYTES` explicitly for larger evidence sets.
 
 Collection times describe when configuration was observed. They do not
 establish when a key/task/service was created or whether its command executed.
@@ -228,7 +228,7 @@ linked event or configuration already has an alert. Its severity is capped at
 that alert's severity, and it stays out of incident building. Task, service and Run-key change events (4698/4702/4699,
 7045/4697, Sysmon 13) are also linked to snapshot records by name. A differing
 command, or a deletion before collection, is shown as a contradiction. Set
-`TRIAGE_FORENSIC_CORRELATION=0` to disable linking.
+`CORROBORA_FORENSIC_CORRELATION=0` to disable linking.
 
 In the dashboard, cases with artifacts have an **Evidence** tab. It shows source
 coverage, each link with its matching fields, contradictions and limits, and the
@@ -261,7 +261,7 @@ but does not guess the type. The parser reads the regf bytes directly. It never
 loads a hive through Windows APIs and never writes to the input.
 
 ```powershell
-python -m triage_engine.cli pack-artifacts --registry-hive C:\Evidence\config\SOFTWARE --hive-type software --registry-hive C:\Evidence\config\SYSTEM --hive-type system --registry-hive C:\Evidence\Users\alice\NTUSER.DAT --hive-type ntuser --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\hive-bundle
+python -m corrobora.cli pack-artifacts --registry-hive C:\Evidence\config\SOFTWARE --hive-type software --registry-hive C:\Evidence\config\SYSTEM --hive-type system --registry-hive C:\Evidence\Users\alice\NTUSER.DAT --hive-type ntuser --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\hive-bundle
 ```
 
 | Hive | Observations | Kind |
@@ -291,7 +291,7 @@ Limits and caveats:
 - **No transaction-log replay.** A dirty hive (sequence numbers differ) is parsed
   with a warning, and changes held only in `.LOG1`/`.LOG2` are missing. Logs
   found beside a selected hive are reported, not packaged.
-- Hives are capped at 256 MiB each (`TRIAGE_MAX_HIVE_BYTES`) and 1 GiB per
+- Hives are capped at 256 MiB each (`CORROBORA_MAX_HIVE_BYTES`) and 1 GiB per
   bundle, separate from the 64 MiB budget for other members.
 - Every cell offset is checked against its hive bin. Subkey and value lists are
   bounded, and repeated, self-referencing or ancestor cell references are
@@ -316,9 +316,9 @@ They count toward the shared 64 MiB bundle budget unless the operator passes
 allows up to 8 GiB per NTFS member and does not raise any other limit.
 
 ```powershell
-python -m triage_engine.cli pack-artifacts --ntfs-mft C:\Evidence\C\$MFT --ntfs-usn-journal C:\Evidence\C\$J --ntfs-volume C: --allow-large-ntfs --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\ntfs-bundle
+python -m corrobora.cli pack-artifacts --ntfs-mft C:\Evidence\C\$MFT --ntfs-usn-journal C:\Evidence\C\$J --ntfs-volume C: --allow-large-ntfs --host CLIENT-HOST --observed-at 2026-10-02T12:00:00Z --output-dir .\runtime\output\ntfs-bundle
 
-python -m triage_engine.cli investigate --evtx C:\Evidence\Events --artifacts .\runtime\output\ntfs-bundle --allow-large-ntfs --case ntfs-chronology
+python -m corrobora.cli investigate --evtx C:\Evidence\Events --artifacts .\runtime\output\ntfs-bundle --allow-large-ntfs --case ntfs-chronology
 ```
 
 The parser checks each record's FILE signature, header bounds and fixup array.

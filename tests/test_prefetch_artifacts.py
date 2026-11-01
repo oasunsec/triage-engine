@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from triage_engine.prefetch_artifacts import parse_pecmd_jsonl
+from corrobora.prefetch_artifacts import parse_pecmd_jsonl
 
 
 BASE = {

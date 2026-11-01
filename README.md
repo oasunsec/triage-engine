@@ -1,6 +1,15 @@
-# Triage Engine
+# Corrobora
 
-Windows endpoint investigation tool for EVTX files and local Windows collection. It creates findings, incidents, timelines, and HTML case reports.
+Offline Windows investigation for responders. Corrobora reads a machine's event logs and its
+forensic artifacts (Prefetch, registry hives with their transaction logs, scheduled tasks, `$MFT`
+and the USN journal), checks each against the other, and turns the result into a case: findings,
+incidents, a timeline, and links that say what the evidence shows and what it does not.
+
+The name is the job. An alert counts for more when an independent record corroborates it, such
+as a service install backed by the file on disk and a Prefetch run. Corrobora shows which claims
+are backed up and which are not.
+
+Formerly Triage Engine. The `triage` command and `TRIAGE_*` settings still work.
 
 ## What it does
 
@@ -85,14 +94,14 @@ Offline investigations and the dashboard run on Windows, Linux, and macOS. Live 
 ### Python on Windows
 
 ```powershell
-cd C:\path\to\triage-engine
-powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -BootstrapDeps
+cd C:\path\to\corrobora
+powershell -ExecutionPolicy Bypass -File .\start-corrobora.ps1 -BootstrapDeps
 ```
 
 ### Python on Linux or macOS
 
 ```bash
-cd ~/triage-engine
+cd ~/corrobora
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -114,7 +123,7 @@ On Linux, run the container as your own account so it can write `data/` and `cas
 
 ```bash
 mkdir -p data cases
-TRIAGE_CONTAINER_UID="$(id -u)" TRIAGE_CONTAINER_GID="$(id -g)" docker compose up --build
+CORROBORA_CONTAINER_UID="$(id -u)" CORROBORA_CONTAINER_GID="$(id -g)" docker compose up --build
 ```
 
 See the [deployment guide](./docs/deployment.md) for upgrades and remote access.
@@ -122,7 +131,7 @@ See the [deployment guide](./docs/deployment.md) for upgrades and remote access.
 ## Command line
 
 ```bash
-triage investigate --evtx /path/to/logs --case Baseline-Workstation-Case
+corrobora investigate --evtx /path/to/logs --case Baseline-Workstation-Case
 ```
 
 On Windows, use a Windows path such as `C:\path\to\logs`.
@@ -132,11 +141,11 @@ On Windows, use a Windows path such as `C:\path\to\logs`.
 Package offline copies you collected, then investigate them alone or with event logs:
 
 ```bash
-triage pack-artifacts --host HOST01 --observed-at 2026-10-23T18:50:00Z \
+corrobora pack-artifacts --host HOST01 --observed-at 2026-10-23T18:50:00Z \
   --prefetch-source /evidence/Prefetch --task-xml /evidence/Tasks \
   --registry-hive /evidence/SYSTEM --hive-type system \
   --output-dir runtime/output/host01-bundle
-triage investigate --evtx /evidence/logs --artifacts runtime/output/host01-bundle --case host01
+corrobora investigate --evtx /evidence/logs --artifacts runtime/output/host01-bundle --case host01
 ```
 
 Originals are hashed and kept. Each observation records its source file, record and what its timestamp means. See [forensic artifact intake](./docs/forensic-artifacts.md) and how the parsers were [checked on a real Windows 11 machine](./docs/real-evidence-validation.md).
@@ -170,7 +179,7 @@ a triage server. The server re-checks every hash and opens the case. See
 
 See the [configuration reference](./docs/configuration.md) for environment variables.
 
-For public screenshots and demos, set `TRIAGE_DEMO_REDACTION=1`. Keep local tuning in `config/tuning/local.json`; that file should stay out of source control.
+For public screenshots and demos, set `CORROBORA_DEMO_REDACTION=1`. Keep local tuning in `config/tuning/local.json`; that file should stay out of source control.
 
 ## Checks
 
