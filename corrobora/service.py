@@ -71,7 +71,7 @@ from corrobora.display import display_input_source, sanitize_display_values
 from corrobora.export_sanitizer import apply_demo_redaction_text
 from corrobora.export_sanitizer import sanitize_export_data
 from corrobora.evidence import atomic_json, bind_event_sources, capture_evidence, case_identity, public_sources, write_analysis_manifest
-from corrobora.forensic_artifacts import read_forensic_bundle
+from corrobora.forensic_artifacts import merge_repeated_warnings, read_forensic_bundle
 from corrobora.forensic_correlation import configured_binary_links, correlate_evidence, cross_source_alerts
 from corrobora.executable_inventory import build_executable_inventory
 from corrobora import __version__
@@ -2038,6 +2038,7 @@ def run_investigation(
             events = []
 
         _check_timeout(stage)
+        collection_warnings[:] = merge_repeated_warnings(collection_warnings)
         # In live mode, a successfully-read channel counts as present even if
         # the lookback window was quiet. Only channels that failed both the
         # modern and legacy APIs are genuinely unreadable and should remain

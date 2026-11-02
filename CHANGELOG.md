@@ -18,6 +18,8 @@
 
 - An elevated live scan also copies Prefetch, scheduled tasks and the SYSTEM, SOFTWARE, Amcache and NTUSER hives with their transaction logs (read-only, through a shadow copy). Without administrator rights the scan says why no artifacts were collected.
 - Every case now has an Evidence tab. Cases with event logs only explain what was not collected and how to collect it.
+- Service and task commands that use machine-wide variables such as `%SystemRoot%` or `\SystemRoot\` are now expanded and linked, assuming the default Windows layout on C:. Each such link states that assumption, and the coverage panel counts them. Per-user variables such as `%APPDATA%` are still not resolved.
+- A warning that repeats, such as a truncated Prefetch file list, is shown once with how many times it occurred.
 
 ### Collection and ingest
 

@@ -74,21 +74,38 @@ def _path_key(path: str) -> str:
 
 def command_image(command: str) -> tuple[str, str]:
     """Return (normalized full image path, unresolved reason) for a configured command."""
+    image, reason, _ = resolve_command_image(command)
+    return image, reason
+
+
+def resolve_command_image(command: str) -> tuple[str, str, list[str]]:
+    """Like command_image, also expanding machine-wide variables; returns the assumptions made.
+
+    %SystemRoot%, %ProgramFiles% and similar are expanded with the default Windows
+    layout on C:, and the assumption travels with every link built from the path.
+    Per-user variables (%APPDATA%, %LOCALAPPDATA%, %USERPROFILE%) are never guessed.
+    """
     text = str(command or "").strip()
     if not text:
-        return "", "empty_command"
+        return "", "empty_command", []
     if text.startswith('"'):
         end = text.find('"', 1)
         image = text[1:end] if end > 0 else ""
     else:
         match = _IMAGE.match(text)
         image = match.group(1) if match else text.split()[0]
+    assumptions: list[str] = []
     if "%" in image or image.casefold().startswith("\\systemroot\\"):
-        return "", "environment_relative_path"
+        from corrobora.executable_inventory import volume_path
+        relative, expanded = volume_path(image)
+        if not relative or not expanded:
+            return "", "environment_relative_path", []
+        image = "c:" + relative
+        assumptions = [f"{note} on C:" for note in expanded]
     key = _path_key(image)
     if not re.match(r"^[a-z]:\\", key):
-        return "", "not_a_full_path"
-    return key, ""
+        return "", "not_a_full_path", []
+    return key, "", assumptions
 
 
 def is_process_creation(event: NormalizedEvent) -> bool:
@@ -187,6 +204,7 @@ def correlate_evidence(events: Iterable[NormalizedEvent], observations: list[dic
                          "run_observations": kinds["prefetch_run"], "records_without_run_time": kinds["prefetch_record"]},
             "persistence_configuration": {"status": family(persistence_count, bool(persistence_count)),
                                           "count": persistence_count,
+                                          "expanded_with_default_layout": unresolved.pop("expanded_with_default_layout", 0),
                                           "unresolved_command_paths": dict(unresolved)},
             "browser_download": {"status": "observed_not_correlated" if kinds["browser_download"] else "not_supplied",
                                  "count": kinds["browser_download"]},
@@ -195,7 +213,7 @@ def correlate_evidence(events: Iterable[NormalizedEvent], observations: list[dic
         },
         "limitations": [
             "Missing or unsupplied evidence is not proof that activity did not occur.",
-            "Commands using environment variables or relative paths are not resolved and are not linked.",
+            "Machine-wide variables such as %SystemRoot% are expanded assuming the default Windows layout on C:; per-user variables and relative paths are not resolved and are not linked.",
             "Prefetch links match executable name, host, and a time window; Prefetch does not record the full path or user in this export.",
             "Configuration observed at collection time does not establish that it existed when the event was recorded.",
             "Run-key writes are matched by key path after the hive root; HKCU and HKU\\<SID> forms are not mapped to a specific user.",
@@ -208,10 +226,12 @@ def correlate_evidence(events: Iterable[NormalizedEvent], observations: list[dic
 
 def _configured_action_links(observation, by_path, unresolved) -> list[dict]:
     details = observation.get("details", {})
-    image, reason = command_image(details.get("command", ""))
+    image, reason, assumptions = resolve_command_image(details.get("command", ""))
     if reason:
         unresolved[reason] += 1
         return []
+    if assumptions:
+        unresolved["expanded_with_default_layout"] += 1
     kind = observation["kind"]
     events = by_path.get((_host_key(observation.get("host", "")), image), [])
     links = []
@@ -247,7 +267,10 @@ def _configured_action_links(observation, by_path, unresolved) -> list[dict]:
                 f"That this {MECHANISM[kind]} launched this process.",
                 "That the configuration existed when the process was created.",
                 "That the executable at that path was the same file at both times.",
+                *(["That this host uses the default Windows folder layout; the configured path was expanded assuming it."]
+                  if assumptions else []),
             ],
+            **({"assumptions": assumptions} if assumptions else {}),
         })
     return links
 

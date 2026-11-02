@@ -47,8 +47,9 @@ def native_alert(event, severity="high"):
     ('"C:\\Program Files\\App\\app.exe" --run', ("c:\\program files\\app\\app.exe", "")),
     ("C:/Users/Public/upd.exe /quiet", ("c:\\users\\public\\upd.exe", "")),
     ("\\??\\C:\\Windows\\x.exe", ("c:\\windows\\x.exe", "")),
-    ("%SystemRoot%\\System32\\svchost.exe -k netsvcs", ("", "environment_relative_path")),
-    ("\\SystemRoot\\System32\\drivers\\x.sys", ("", "environment_relative_path")),
+    ("%SystemRoot%\\System32\\svchost.exe -k netsvcs", ("c:\\windows\\system32\\svchost.exe", "")),
+    ("\\SystemRoot\\System32\\drivers\\x.sys", ("c:\\windows\\system32\\drivers\\x.sys", "")),
+    ("%APPDATA%\\Vendor\\x.exe", ("", "environment_relative_path")),
     ("powershell.exe -enc QQ==", ("", "not_a_full_path")),
     ("", ("", "empty_command")),
 ])
@@ -68,6 +69,22 @@ def test_exact_path_match_is_observed_with_launcher_inference_and_limits():
     assert any("launched this process" in item for item in link["does_not_establish"])
     assert coverage["families"]["persistence_configuration"]["status"] == "observed"
     assert coverage["families"]["browser_download"]["status"] == "not_supplied"
+
+
+def test_expanded_machine_path_links_and_states_the_layout_assumption():
+    event = process_event(image="C:\\Windows\\System32\\svchost.exe")
+    relationships, coverage = correlate_evidence([event], [task("%SystemRoot%\\System32\\svchost.exe -k netsvcs")])
+    assert len(relationships) == 1
+    link = relationships[0]
+    assert link["assumptions"] and all(note.endswith("on C:") for note in link["assumptions"])
+    assert any("default Windows folder layout" in item for item in link["does_not_establish"])
+    assert coverage["families"]["persistence_configuration"]["expanded_with_default_layout"] == 1
+
+
+def test_exact_path_links_carry_no_layout_assumption():
+    relationships, coverage = correlate_evidence([process_event()], [task()])
+    assert "assumptions" not in relationships[0]
+    assert coverage["families"]["persistence_configuration"]["expanded_with_default_layout"] == 0
 
 
 def test_parent_not_a_launcher_keeps_field_match_without_inference():
@@ -448,3 +465,10 @@ def test_public_task_create_delete_sample_reports_contradiction_for_present_task
     earlier = {**record, "observed_at": "2019-03-19T00:02:04.330000+00:00"}
     relationships, _ = correlate_evidence(events, [earlier])
     assert all(link["contradictions"] == [] for link in relationships)
+
+
+def test_repeated_warnings_merge_with_a_count_in_first_seen_order():
+    from corrobora.forensic_artifacts import merge_repeated_warnings
+    merged = merge_repeated_warnings(["b", "a", "b", "c", "b"])
+    assert merged == ["b (3 times)", "a", "c"]
+    assert merge_repeated_warnings([]) == []

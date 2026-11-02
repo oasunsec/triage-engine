@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -282,8 +283,15 @@ def read_forensic_bundle(
             raise ValueError("Artifact records exceed 50000 observations")
     _note_shared_prefetch_sources(observations)
     if adapter_warnings:
-        manifest = {**manifest, "completeness": "partial", "warnings": [*manifest.get("warnings", []), *adapter_warnings]}
+        manifest = {**manifest, "completeness": "partial",
+                    "warnings": merge_repeated_warnings([*manifest.get("warnings", []), *adapter_warnings])}
     return ForensicBundle(manifest, observations, alerts, source_files, file_hashes, ntfs)
+
+
+def merge_repeated_warnings(warnings: list[str]) -> list[str]:
+    """Keep first-seen order and state how often an identical warning occurred."""
+    counts = Counter(warnings)
+    return [text if counts[text] == 1 else f"{text} ({counts[text]} times)" for text in dict.fromkeys(warnings)]
 
 
 SHARED_PREFETCH_NOTE = (" The same Prefetch file appears to be read by both PECmd and the native parser; two tools "
