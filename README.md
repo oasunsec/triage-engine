@@ -26,15 +26,29 @@ Formerly Triage Engine. The `triage` command and `TRIAGE_*` settings still work.
 
 ## Screenshots
 
+The screenshots below show one case: a public EVTX sample (`sysmon_1_11_exec_as_system_via_schedtask.evtx`) paired with synthetic, labelled artifacts. Nothing in them comes from a real host.
+
 ### Investigation Overview
 
 Case priorities, review workload, and searchable case history.
 
 ![Investigation Overview](./screenshots/workspace-overview.png)
 
+### Case Overview
+
+The triage disposition, next steps, and the host, user, and time range the evidence covers.
+
+![Case Overview](./screenshots/case-overview.png)
+
+### Source Coverage
+
+Which kinds of evidence were supplied, how many records each produced, and what could not be linked.
+
+![Source Coverage](./screenshots/source-coverage.png)
+
 ### Evidence Links
 
-Source coverage, event-to-artifact links with what each one does and does not show, analyst decisions, and the artifact observations. The case is a public EVTX sample paired with synthetic artifacts.
+Each event-to-artifact link shows the matching fields, its class, what it does not establish, and the analyst's decision.
 
 ![Evidence Links](./screenshots/workspace-evidence.png)
 
@@ -48,21 +62,9 @@ Review status, ownership, and assignment.
 
 ![Review Queue](./screenshots/review-queue.png)
 
-### Baseline Case
-
-A quieter case used as a comparison point.
-
-![Baseline Case](./screenshots/baseline-case-overview.png)
-
-### Attack Case
-
-A case with findings, incidents, and analyst notes.
-
-![Attack Case](./screenshots/attack-case-overview.png)
-
 ### Finding Detail
 
-Finding status, disposition, owner, notes, and evidence.
+Findings with severity, confidence, host, user, and analyst review.
 
 ![Finding Detail](./screenshots/finding-detail.png)
 
