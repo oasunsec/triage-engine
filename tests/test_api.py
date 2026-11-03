@@ -1863,7 +1863,8 @@ class AuthAPITests(unittest.TestCase):
         job_id = start.json()["job_id"]
 
         final_job = None
-        for _ in range(50):
+        deadline = time.monotonic() + 30  # A loaded machine can take several seconds to parse the sample.
+        while time.monotonic() < deadline:
             job_resp = self.client.get(f"/api/jobs/{job_id}")
             self.assertEqual(job_resp.status_code, 200)
             final_job = job_resp.json()
