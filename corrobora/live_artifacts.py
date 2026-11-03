@@ -124,7 +124,7 @@ def collect_live_artifacts(
     bundle = staging / "bundle"
     try:
         pack_artifacts(bundle, host=host, observed_at=observed_at, prefetch_source=prefetch,
-                       scheduled_task_xml=tasks, registry_hives=collected_hives)
+                       scheduled_task_xml=tasks, registry_hives=collected_hives, whole_task_folder=True)
     except (ValueError, OSError) as exc:
         steps.append({"step": "package", "status": "failed", "error": str(exc)[:300]})
         return None, steps

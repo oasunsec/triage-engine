@@ -3478,12 +3478,25 @@ def _local_account_enumeration(events: List[NormalizedEvent]) -> List[Alert]:
     return alerts
 
 
+# The Volume Shadow Copy service checks Administrators and Backup Operators
+# membership for every shadow-copy requestor, so each backup or esentutl /vss
+# copy writes 4799 for both groups. Copying hives through VSS is detected from
+# process creation, not from these membership checks.
+_VSS_CHECKED_GROUPS = {"S-1-5-32-544", "S-1-5-32-551"}
+_VSS_CALLERS = {"c:\\windows\\system32\\vssvc.exe", "c:\\windows\\system32\\esentutl.exe"}
+
+
+def _is_vss_privilege_check(ev: NormalizedEvent) -> bool:
+    caller = str(ev.event_data.get("CallerProcessName", "")).strip().casefold()
+    return caller in _VSS_CALLERS and str(ev.event_data.get("TargetSid", "")).upper() in _VSS_CHECKED_GROUPS
+
+
 def _local_group_enumeration(events: List[NormalizedEvent]) -> List[Alert]:
     alerts = []
     grouped: Dict[Tuple[str, str], List[NormalizedEvent]] = defaultdict(list)
 
     for ev in events:
-        if ev.event_id != 4799 or not _is_security_audit(ev):
+        if ev.event_id != 4799 or not _is_security_audit(ev) or _is_vss_privilege_check(ev):
             continue
         actor = ev.subject_domain_user or ev.domain_user or "unknown"
         grouped[(ev.computer or "unknown", actor)].append(ev)

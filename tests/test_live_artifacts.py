@@ -46,6 +46,8 @@ def test_collects_prefetch_tasks_and_hives_into_a_verified_bundle(tmp_path):
     assert copied[:2] == ["SYSTEM", "SYSTEM.LOG1"]
     kinds = {member["kind"] for member in json.loads((bundle / "manifest.json").read_text())["files"]}
     assert {"prefetch_source", "scheduled_task_xml", "registry_hive"} <= kinds
+    warnings = json.loads((bundle / "manifest.json").read_text())["warnings"]
+    assert not any("task XML files were selected individually" in text for text in warnings)
     forensic = read_forensic_bundle(str(bundle))
     assert {item["kind"] for item in forensic.observations} >= {"prefetch_run", "scheduled_task"}
 

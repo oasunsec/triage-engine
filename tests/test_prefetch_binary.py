@@ -203,7 +203,8 @@ def test_compressed_v30_matches_uncompressed_parse():
     [compressed], warnings = parse_prefetch_binary(packed, **CONTEXT)
     [uncompressed], _ = parse_prefetch_binary(plain, **CONTEXT)
     # The long list is truncated in export_record but keeps the executable's own path.
-    assert warnings == ["Prefetch filename list truncated to 65536 characters in export_record"]
+    assert warnings == ["A Prefetch filename list longer than 65536 characters was shortened in the exported record; "
+                        "the original .pf file keeps the full list"]
     assert compressed["details"]["export_record"]["FilesLoaded"].startswith(UPD_PATH)
     assert compressed["details"]["native"]["compressed"] is True
     assert compressed["details"]["native"]["filename_count"] == 1201
@@ -287,7 +288,7 @@ def test_oversized_and_out_of_bounds_string_tables():
         parse_prefetch_binary(build_scca(30, strings_size=10**6), **CONTEXT)
     names = tuple(f"\\V\\F{i}" for i in range(MAX_FILENAMES + 10))
     [run], warnings = parse_prefetch_binary(build_scca(30, filenames=names), **CONTEXT)
-    assert any("truncated at" in w for w in warnings) and any("export_record" in w for w in warnings)
+    assert any("truncated at" in w for w in warnings) and any("shortened in the exported record" in w for w in warnings)
     assert run["details"]["native"]["filename_count"] == MAX_FILENAMES
     assert len(run["details"]["export_record"]["FilesLoaded"]) <= MAX_JOINED
     assert run["details"]["export_record"]["ParsingError"] is True

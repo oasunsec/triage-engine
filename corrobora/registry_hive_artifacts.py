@@ -345,10 +345,12 @@ class _Builder:
         self.warnings: list[str] = []
 
     def warn(self, message: str) -> None:
+        # Name the hive as collected (SYSTEM, NTUSER.DAT), not its bundle member name.
+        label = self.original_name or self.source_name
         if len(self.warnings) < MAX_WARNINGS:
-            self.warnings.append(f"{self.source_name}: {message}")
+            self.warnings.append(f"{label}: {message}")
         elif len(self.warnings) == MAX_WARNINGS:
-            self.warnings.append(f"{self.source_name}: further hive warnings suppressed")
+            self.warnings.append(f"{label}: further hive warnings suppressed")
 
     def add(self, kind: str, key_path: str, value_name: str | None, key: dict, details: dict) -> None:
         locator = {"hive_type": self.hive_type, "key_path": key_path, "value_name": value_name}

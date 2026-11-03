@@ -20,6 +20,9 @@
 - Every case now has an Evidence tab. Cases with event logs only explain what was not collected and how to collect it.
 - Service and task commands that use machine-wide variables such as `%SystemRoot%` or `\SystemRoot\` are now expanded and linked, assuming the default Windows layout on C:. Each such link states that assumption, and the coverage panel counts them. Per-user variables such as `%APPDATA%` are still not resolved.
 - A warning that repeats, such as a truncated Prefetch file list, is shown once with how many times it occurred.
+- Shadow-copy privilege checks no longer raise Local Group Enumeration. The Volume Shadow Copy service checks Administrators and Backup Operators membership for every copy, so a live scan's own hive copies were reported as discovery on a clean machine.
+- When a case has no event-to-artifact links, the Evidence tab says why: usually there are no process-creation records (Sysmon 1 or Security 4688) to match.
+- Warnings name the hive as collected (SYSTEM, NTUSER.DAT) rather than its bundle file, and live scans no longer warn that task files were selected individually, since they copy the whole Tasks folder.
 
 ### Collection and ingest
 

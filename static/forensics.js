@@ -78,6 +78,20 @@ async function loadForensicEvidence(name) {
   }
 }
 
+// Says which missing input left the case without links, so the analyst knows what to collect next.
+function noLinksReason(summary) {
+  const families = (summary.coverage || {}).families || {};
+  const processes = (families.windows_process_creation || {}).count || 0;
+  const changes = (families.windows_configuration_change || {}).count || 0;
+  if (!summary.evaluated) return 'No links: links need both event logs and artifacts in the same case.';
+  if (!processes && !changes) {
+    return 'No links: the event logs hold no process-creation records (Sysmon event 1 or Security 4688) and no service, task or Run-key changes, '
+      + 'so there was nothing to match against the artifacts. Turn on process-creation auditing with command lines, or install Sysmon, '
+      + 'and use an event window that covers the activity the artifacts record.';
+  }
+  return 'No links: no event in this case matched an artifact on path, name, host and time. This is not evidence that the activity did not happen.';
+}
+
 function renderNoArtifacts() {
   return `<section class="card"><div class="section-heading"><div><div class="eyebrow">FORENSIC ARTIFACTS</div><h2>This case has event logs only</h2></div></div>
     <p>The findings in this case come from Windows event logs. No artifacts were collected with them (Prefetch, registry hives, scheduled tasks, <code>$MFT</code>, USN journal), so there is nothing to show here yet: no file-system records, no executable inventory, and no links that confirm an event against an artifact.</p>
@@ -178,7 +192,7 @@ function renderForensicLinks() {
         ${(link.ambiguity || {}).candidate_events > 1 ? `<p style="color:var(--orange)">${esc(link.ambiguity.candidate_events)} candidate events matched; this link is ambiguous.</p>` : ''}
         ${decisionControls('relationship', link.relationship_id, link.review)}
       </div></details>`;
-  }).join('') : '<div class="empty-state">No derived evidence links for this case.</div>';
+  }).join('') : `<div class="empty-state">${esc(noLinksReason((forensicLinks || {}).summary || {}))}</div>`;
 }
 
 function renderForensicHypotheses() {

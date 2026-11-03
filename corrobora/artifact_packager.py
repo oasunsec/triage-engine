@@ -85,7 +85,7 @@ def pack_artifacts(
     pecmd_version: str = "", scheduled_task_xml: list[str | Path] = (),
     registry_hives: list[tuple[str | Path, str]] = (),
     ntfs_mft: list[str | Path] = (), ntfs_usn_journal: list[str | Path] = (), ntfs_volume: str = "",
-    allow_large_ntfs: bool = False,
+    allow_large_ntfs: bool = False, whole_task_folder: bool = False,
 ) -> Path:
     """Copy validated, caller-selected artifact files into a new bundle."""
     host = _validate_text(host, "host", 256)
@@ -232,7 +232,7 @@ def pack_artifacts(
             entries.append(item)
         warnings = ([] if not persistence_records else [
             "Persistence records supplied without their acquisition manifest; collector scope and failures are unknown."])
-        if scheduled_task_xml:
+        if scheduled_task_xml and not whole_task_folder:
             # Selected task files are not a full Tasks directory; absent tasks prove nothing.
             warnings.append("Scheduled task XML files were selected individually; other tasks on the host may exist.")
         if registry_hives:

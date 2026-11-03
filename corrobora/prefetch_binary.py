@@ -246,7 +246,8 @@ def _join_bounded(values: list[str], label: str, warnings: list[str], keep: str 
     for value in values:
         cost = len(value) + (2 if joined else 0)
         if total + cost > MAX_JOINED:
-            warnings.append(f"Prefetch {label} truncated to {MAX_JOINED} characters in export_record")
+            warnings.append(f"A Prefetch {label} longer than {MAX_JOINED} characters was shortened in the exported record; "
+                            "the original .pf file keeps the full list")
             break
         joined.append(value)
         total += cost
