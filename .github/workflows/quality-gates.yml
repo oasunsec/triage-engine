@@ -217,7 +217,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: production-readiness-report
-          path: .
+          path: audit-artifacts
 
       - name: Run release gate
         run: python scripts/release_gate.py --config config/release_gate.ci.json --strict --report release_gate.json
