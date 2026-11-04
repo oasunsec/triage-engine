@@ -165,6 +165,12 @@ def main(argv: List[str] | None = None) -> int:
     print(f"Validation passed: {validation['passed']}")
     print(f"Local tuning configured: {tuning['configured']}")
     print(f"Sigma rules available: {sigma['rule_count']}")
+    if not validation["passed"]:
+        # The report is the record; the tail shows which test failed without opening it.
+        output = (validation["stdout"] + validation["stderr"]).strip().splitlines()
+        print("Validation output (last 40 lines):")
+        print("
+".join(output[-40:]))
     return 0 if validation["passed"] and (not args.strict or status == "production_candidate") else 1
 
 

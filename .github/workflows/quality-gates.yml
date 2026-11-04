@@ -175,6 +175,7 @@ jobs:
         run: python scripts/production_readiness.py
 
       - name: Upload production readiness report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: production-readiness-report
