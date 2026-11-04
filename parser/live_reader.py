@@ -49,8 +49,9 @@ def _numeric_win32_code(error: object) -> Optional[int]:
     # so avoid relying on localized message text for access classification.
     if isinstance(error, int) and not isinstance(error, bool):
         return int(error)
-    if isinstance(error, OSError) and error.winerror:
-        return int(error.winerror)
+    winerror = getattr(error, "winerror", None)  # OSError has winerror only on Windows.
+    if isinstance(error, OSError) and winerror:
+        return int(winerror)
     args = getattr(error, "args", ()) or ()
     for value in args:
         if isinstance(value, int):
