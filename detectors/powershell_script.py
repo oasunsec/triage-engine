@@ -586,7 +586,34 @@ def _is_download_cradle(low: str, remote_url: str) -> bool:
     remote_url_l = remote_url.lower().strip()
     if remote_url_l.startswith("http://go.microsoft.com/fwlink") or remote_url_l.startswith("https://go.microsoft.com/fwlink"):
         return False
+    if _is_data_only_manifest(low):
+        return False
     return bool(DOWNLOAD_CRADLE_RE.search(low))
+
+
+# Literal strings without $ (double-quoted ones with $ may hold executable subexpressions).
+_MANIFEST_LITERAL_RE = re.compile(r"@'.*?'@|@\"[^$]*?\"@|'(?:[^']|'')*'|\"(?:[^\"`$]|`.)*\"", re.DOTALL)
+
+
+def _is_data_only_manifest(low: str) -> bool:
+    """True when the block is a module manifest made only of literal values.
+
+    PowerShell logs .psd1 manifests as script blocks; their CmdletsToExport
+    lists name Invoke-WebRequest and HelpInfoURI supplies a URL. A hashtable of
+    literals executes nothing, so it cannot be a download cradle. Any command,
+    pipeline, variable or subexpression makes this return False.
+    """
+    body = low.split("# sig # begin signature block", 1)[0]
+    body = re.sub(r"<#.*?#>", " ", body, flags=re.DOTALL)
+    body = _MANIFEST_LITERAL_RE.sub(" \x00 ", body)
+    body = re.sub(r"#[^\n]*", " ", body)
+    body = re.sub(r"\$(?:true|false|null)\b", " \x00 ", body).strip()
+    if not (body.startswith("@{") and body.endswith("}")) or not re.search(r"\bmoduleversion\s*=", body):
+        return False
+    if not re.fullmatch(r"[\w\s=@{}(),;.\-\x00]*", body) or re.search(r"(?<!@)\(", body):
+        return False
+    # Every bareword must be a hashtable key; a bareword value would be a command.
+    return all(re.match(r"\s*=", body[m.end():]) for m in re.finditer(r"[a-z_][\w\-.]*", body))
 
 
 def _is_lsass_wer_dump(low: str) -> bool:

@@ -1,0 +1,21 @@
+# Log Parser v4 — Dependencies
+# Core (stdlib — no install needed)
+# json, re, os, sys, time, uuid, logging, argparse, base64, sqlite3
+
+# Required
+python-evtx>=0.7.4        # EVTX parsing
+
+# Optional — Threat Intelligence
+pyyaml>=6.0               # SIGMA rule parsing
+yara-python>=4.3.0        # YARA file scanning
+
+# Optional — API Integrations (for --enrich mode)
+# No pip packages needed — uses urllib.request directly
+# API keys set via env vars or .env file:
+#   OTX_API_KEY          — AlienVault OTX
+#   VT_API_KEY           — VirusTotal v3
+#   ABUSEIPDB_API_KEY    — AbuseIPDB
+#   SHODAN_API_KEY       — Shodan
+
+# Optional — TAXII feeds
+# Uses urllib.request directly — no taxii2-client needed

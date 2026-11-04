@@ -3,9 +3,9 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    TRIAGE_RUNTIME_MODE=docker \
-    TRIAGE_LOG_FILE_ENABLED=1 \
-    TRIAGE_LOG_FILE_PATH=/app/data/triage-engine.log
+    CORROBORA_RUNTIME_MODE=docker \
+    CORROBORA_LOG_FILE_ENABLED=1 \
+    CORROBORA_LOG_FILE_PATH=/app/data/corrobora.log
 
 WORKDIR /app
 
@@ -17,7 +17,12 @@ RUN python -m pip install --upgrade pip && \
 COPY . /app
 
 RUN python -m pip install ".[server,sigma]" && \
-    mkdir -p /app/data /app/cases /app/uploads
+    groupadd --gid 10001 triage && \
+    useradd --uid 10001 --gid triage --no-create-home triage && \
+    mkdir -p /app/data /app/cases /app/uploads && \
+    chown -R triage:triage /app/data /app/cases /app/uploads
+
+USER 10001:10001
 
 EXPOSE 8000
 

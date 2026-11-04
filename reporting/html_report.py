@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict
 
-from triage_engine.display import display_input_source
+from corrobora.display import display_input_source
 
 
 def _read_json(path: str) -> Dict[str, Any]:
@@ -31,18 +33,82 @@ def generate_from_artifacts(
     graph_path: str,
     output_path: str,
 ) -> None:
-    findings_data = _read_json(findings_path)
-    timeline_data = _read_json(timeline_path)
-    graph_data = _read_json(graph_path)
+    """Render a report from persisted JSON artifacts."""
+
+    generate_from_data(
+        _read_json(findings_path),
+        _read_json(timeline_path),
+        _read_json(graph_path),
+        output_path,
+    )
+
+
+REPORT_ARTIFACT_ROWS = 1000
+# Bundled so reports render their graph offline (reports are opened on IR laptops without network).
+GRAPH_LIBRARY = Path(__file__).resolve().parents[1] / "static" / "vendor" / "cytoscape-3.34.3.min.js"
+
+
+def _graph_library_tag() -> str:
+    try:
+        code = GRAPH_LIBRARY.read_text(encoding="utf-8")
+    except OSError:
+        return "<!-- Graph library not bundled; the entity graph tab explains this. -->"
+    if "</script" in code.lower():
+        raise ValueError("Bundled graph library cannot be inlined safely")
+    # Escape non-ASCII so the report decodes under any default encoding; \u escapes are
+    # equivalent in JavaScript strings, regular expressions and identifiers.
+    ascii_code = "".join(char if ord(char) < 128 else "".join(
+        f"\\u{unit:04x}" for unit in struct.unpack(f"<{len(char.encode('utf-16-le')) // 2}H", char.encode("utf-16-le")))
+        for char in code)
+    return "<script>/* cytoscape 3.34.3, MIT */\n" + ascii_code + "</script>"
+
+
+
+def _bounded_timeline(timeline_data: Dict[str, Any], limit: int = REPORT_ARTIFACT_ROWS) -> Dict[str, Any]:
+    """Keep every alert-derived row and at most ``limit`` artifact rows for the HTML report.
+
+    A real workstation bundle produced 25,879 artifact rows (71 MB of report).
+    Linked artifact rows are kept first, then the most recent. timeline.json
+    stays complete.
+    """
+    rows = timeline_data.get("timeline", []) or []
+    artifacts = [row for row in rows if row.get("type") == "artifact"]
+    if len(artifacts) <= limit:
+        return timeline_data
+    linked = [row for row in artifacts if (row.get("related_ids") or {}).get("relationship_ids")]
+    recent = sorted((row for row in artifacts if not (row.get("related_ids") or {}).get("relationship_ids")),
+                    key=lambda row: str(row.get("timestamp") or ""), reverse=True)
+    kept = {id(row) for row in (linked + recent)[:limit]}
+    summary = {**(timeline_data.get("summary") or {}), "report_artifact_rows": len(kept),
+               "omitted_artifact_rows": len(artifacts) - len(kept), "complete_timeline": "timeline.json"}
+    return {**timeline_data, "summary": summary,
+            "timeline": [row for row in rows if row.get("type") != "artifact" or id(row) in kept]}
+
+
+def generate_from_data(
+    findings_data: Dict[str, Any],
+    timeline_data: Dict[str, Any],
+    graph_data: Dict[str, Any],
+    output_path: str,
+) -> None:
+    """Render directly from already-built data without reopening AV-scanned files.
+
+    Windows endpoint protection can temporarily quarantine or deny reads of a
+    freshly written JSON artifact whose evidence contains malware-like strings.
+    The service already has the deterministic in-memory payloads, so keeping
+    this path avoids turning a successful investigation into a report failure.
+    """
+
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    timeline_data = _bounded_timeline(timeline_data)
 
     template = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Triage Case Report</title>
-<script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+<title>Corrobora Case Report</title>
+__GRAPH_LIBRARY__
 <style>
 :root {
   --bg: #eef2f7;
@@ -70,9 +136,9 @@ nav button.active { background: var(--accent); color: white; border-color: var(-
 .panel { display: none; padding: 16px; }
 .panel.active { display: block; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04); }
+.card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04); }
 .card h3 { margin: 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.card .val { font-size: 20px; margin-top: 8px; font-weight: 700; }
+.card .val { font-size: 20px; margin-top: 8px; font-weight: 700; overflow-wrap: anywhere; }
 .card-grid { display: grid; gap: 12px; }
 .incident-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05); }
 .incident-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
@@ -100,12 +166,31 @@ th { background: #f8fafc; color: var(--muted); font-size: 12px; text-transform: 
 tr:hover td { background: #f8fbff; }
 .details { margin-top: 6px; background: #f8fafc; padding: 8px; border-radius: 8px; border: 1px solid #e2e8f0; font-family: Consolas, monospace; white-space: pre-wrap; font-size: 12px; }
 #graph { height: 520px; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; }
+.graph-legend { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.graph-legend-item { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; background: #fff; font-size: 12px; }
+.graph-legend-swatch { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.graph-legend-ring { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 3px solid; box-sizing: border-box; }
+.graph-replay { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; flex-wrap: wrap; }
+.graph-replay input[type=range] { flex: 1; min-width: 160px; }
+.graph-facts dt { font-weight: 600; margin-top: 6px; }
+.graph-facts dd { margin: 0; overflow-wrap: anywhere; }
 .split { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
 .search { margin-bottom: 8px; }
 input[type='text'] { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; }
 .muted { color: var(--muted); }
 .inline-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .list-block { margin-top: 12px; }
+.scope-alert { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid #f59e0b; background: #fffbeb; color: #78350f; font-size: 13px; }
+.scope-hosts-wrap { margin-top: 10px; max-width: 100%; overflow-x: auto; }
+.scope-hosts { font-size: 12px; }
+.scope-hosts th, .scope-hosts td { padding: 5px 7px; text-align: left; border-bottom: 1px solid var(--line); }
+.scope-hosts td { overflow-wrap: anywhere; }
+.scope-hosts td.num { text-align: right; white-space: nowrap; }
+.scope-hosts td.window { white-space: nowrap; color: var(--muted); }
+.verdict-pill { display: inline-block; padding: 2px 7px; border-radius: 999px; font-weight: 600; white-space: nowrap; background: #e2e8f0; color: #1e293b; }
+.verdict-pill.escalate { background: #fee2e2; color: #991b1b; }
+.verdict-pill.investigate { background: #fef3c7; color: #92400e; }
+.verdict-pill.monitor { background: #dbeafe; color: #1e3a8a; }
 .list-block ul { margin: 6px 0 0; padding-left: 18px; }
 .list-block li { margin: 4px 0; }
 .executive-summary { margin-bottom: 12px; background: linear-gradient(165deg, #ffffff, #f8fbff); }
@@ -124,6 +209,8 @@ input[type='text'] { width: 100%; padding: 8px; border: 1px solid #cbd5e1; borde
 .executive-block { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px; }
 .executive-block h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .executive-block p { margin: 0; }
+.triage-disposition { border-left: 4px solid var(--accent); }
+.triage-disposition strong { color: var(--accent); font-size: 18px; }
 .exec-list { margin: 8px 0 0; padding-left: 16px; }
 .exec-list li { margin: 4px 0; }
 .mitre-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
@@ -153,7 +240,7 @@ details > summary { cursor: pointer; color: var(--accent); }
 <body>
 <header>
   <div class="header-top">
-    <h1>Triage Case Report</h1>
+    <h1>Corrobora Case Report</h1>
     <div class="header-tools">
       <button class="header-btn" onclick="window.print()">Print / Save PDF</button>
     </div>
@@ -168,6 +255,7 @@ details > summary { cursor: pointer; color: var(--accent); }
   <button onclick="showPanel('timeline', this)">Timeline</button>
   <button onclick="showPanel('graph-panel', this)">Entity Graph</button>
   <button onclick="showPanel('raw', this)">Raw Events</button>
+  <button id="artifact-tab" onclick="showPanel('artifacts', this)">Persistence Snapshot</button>
 </nav>
 
 <section id="overview" class="panel active">
@@ -186,10 +274,17 @@ details > summary { cursor: pointer; color: var(--accent); }
         <p id="executive-impact"></p>
         <p class="subtle" id="executive-confidence"></p>
       </div>
+      <div class="executive-block triage-disposition">
+        <h4>Triage Disposition</h4>
+        <p><strong id="executive-disposition">Not yet determined</strong></p>
+        <p class="subtle" id="executive-disposition-confidence"></p>
+        <ul class="exec-list" id="executive-disposition-reasons"></ul>
+      </div>
       <div class="executive-block">
         <h4>Affected Scope</h4>
         <div class="inline-pills" id="executive-scope"></div>
         <p class="subtle" id="executive-time-range"></p>
+        <div id="executive-scope-detail"></div>
       </div>
       <div class="executive-block">
         <h4>Collection Quality</h4>
@@ -243,12 +338,31 @@ details > summary { cursor: pointer; color: var(--accent); }
 </section>
 
 <section id="graph-panel" class="panel">
+  <div class="graph-legend" aria-label="Entity types">
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#16a34a"></span>Host</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#d97706"></span>Account</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#dc2626"></span>IP address</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#2563eb"></span>Service</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#0891b2"></span>Process</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#475569"></span>Command line</span>
+    <span class="graph-legend-item"><span class="graph-legend-swatch" style="background:#9333ea"></span>Registry key</span>
+  </div>
+  <div class="graph-legend" aria-label="Investigation roles">
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#f97316"></span>Ring: observed entry point (source address)</span>
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#991b1b"></span>Ring: suspected attacker (external source)</span>
+    <span class="graph-legend-item"><span class="graph-legend-ring" style="border-color:#111827"></span>Ring: pivot (most connected)</span>
+  </div>
+  <div class="graph-replay" aria-label="Replay interactions in time order">
+    <button type="button" id="graph-play" onclick="toggleGraphReplay()">&#9654; Replay</button>
+    <input type="range" id="graph-step" min="0" max="0" value="0" oninput="showGraphStep(Number(this.value), false)" aria-label="Replay step">
+    <span id="graph-step-label" class="subtle">All interactions shown.</span>
+  </div>
   <div class="split">
     <div id="graph"></div>
     <div>
       <div class="incident-card">
-        <h3>Pivot Context</h3>
-        <p class="subtle">Click a host, user, or IP node to pivot the rest of the report. Process and command nodes show evidence context without applying a filter.</p>
+        <h3>Selection</h3>
+        <p class="subtle">Click a node or a line. Hosts, accounts and IP addresses also filter the rest of the report. Line labels name the detection that links two entities; &times;N counts alerts.</p>
         <div id="pivot-details" class="details">No selection yet.</div>
       </div>
     </div>
@@ -270,6 +384,22 @@ details > summary { cursor: pointer; color: var(--accent); }
   </table>
 </section>
 
+<section id="artifacts" class="panel">
+  <div class="incident-card">
+    <h3 id="artifact-heading">Observed Persistence Configuration</h3>
+    <p id="artifact-summary" class="subtle"></p>
+    <p class="subtle">Recorded times retain their source meaning. Collection time is separate. Downloads do not prove execution; Prefetch does not establish user, full executable path, or malicious intent. Retained source files contain the original records.</p>
+    <input id="artifact-search" type="text" placeholder="Search host, kind, path, URL, or source record" oninput="renderArtifacts(); renderRelationships()"/>
+  </div>
+  <table><thead><tr><th>Recorded time / meaning</th><th>Collected</th><th>Host</th><th>Kind</th><th>Name / Location</th><th>Details</th><th>Source</th></tr></thead><tbody id="artifact-body"></tbody></table>
+  <div class="incident-card">
+    <h3>Evidence Links</h3>
+    <p id="relationship-summary" class="subtle"></p>
+    <p class="subtle">Each link lists the matching field values, its class (observed field match, supported inference, or weak temporal association), and what it does not establish. Links are derived; source records remain the reference.</p>
+  </div>
+  <table><thead><tr><th>Class / rule</th><th>Event record</th><th>Artifact record</th><th>Matched fields</th><th>Not established</th></tr></thead><tbody id="relationship-body"></tbody></table>
+</section>
+
 <script>
 const FINDINGS = __FINDINGS_JSON__;
 const TIMELINE = __TIMELINE_JSON__;
@@ -279,7 +409,7 @@ let cy = null;
 let activeFilters = { host: '', user: '', ip: '' };
 
 function esc(text) {
-  return String(text || '')
+  return String(text ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -308,6 +438,12 @@ function present(value) {
 
 function hasValue(value) {
   return Boolean(value && value !== '-' && value !== 'unknown');
+}
+
+function confidencePercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0';
+  return String(Math.round((number >= 0 && number <= 1 ? number * 100 : number) * 100) / 100);
 }
 
 function canonicalUser(obj) {
@@ -484,7 +620,7 @@ function collectAffectedEntities(primaryValues, fallbackValues, limit) {
 function resolveTimeRange(caseData) {
   let firstSeen = caseData.first_seen || '';
   let lastSeen = caseData.last_seen || '';
-  const timelineValues = uniqueValues((TIMELINE.timeline || []).map(row => row.timestamp || ''))
+  const timelineValues = uniqueValues((TIMELINE.timeline || []).filter(row => row.type !== 'artifact' && row.time_semantics !== 'collection_snapshot').map(row => row.timestamp || ''))
     .filter(value => value !== 'unknown')
     .sort();
   if (!hasValue(firstSeen) && timelineValues.length) firstSeen = timelineValues[0];
@@ -508,8 +644,28 @@ function executiveActions(topIncident) {
   return ['Review high-confidence evidence and validate scope across impacted hosts and users.'];
 }
 
+function evidenceScopeHtml(scope) {
+  const hosts = Array.isArray(scope.hosts) ? scope.hosts : [];
+  const warnings = Array.isArray(scope.warnings) ? scope.warnings : [];
+  if (!hosts.length && !warnings.length) return '';
+  const alert = warnings.length
+    ? `<div class="scope-alert" role="note"><strong>Verify the evidence scope.</strong> ${warnings.map(esc).join(' ')}</div>`
+    : '';
+  if (hosts.length < 2) return alert;
+  const day = value => esc(String(value || '').slice(0, 10));
+  const verdictCell = verdict => {
+    if (!verdict || !verdict.disposition) return '-';
+    const kind = String(verdict.disposition).toLowerCase().split(' ')[0];
+    return `<span class="verdict-pill ${esc(kind)}" title="${esc((verdict.reasons || []).join('; '))}">${esc(verdict.disposition)}</span> <span class="subtle">${esc(verdict.response_priority || '')}</span>`;
+  };
+  const rows = hosts.slice(0, 25).map(row => `<tr><td>${esc(row.host)}</td><td>${verdictCell(row.verdict)}</td><td class="num">${esc(row.event_count)}</td><td class="num">${esc(row.finding_count)}/${esc(row.incident_count)}</td><td class="window">${day(row.first_seen)}<br>${day(row.last_seen)}</td></tr>`).join('');
+  const more = hosts.length > 25 ? `<p class="subtle">Showing 25 of ${esc(hosts.length)} hosts; the full list is in findings.json.</p>` : '';
+  return `${alert}<div class="scope-hosts-wrap"><table class="scope-hosts"><thead><tr><th>Host</th><th>Host verdict</th><th>Events</th><th title="Findings / incidents">Find./Inc.</th><th>Window</th></tr></thead><tbody>${rows}</tbody></table></div>${more}`;
+}
+
 function renderExecutiveSummary(caseData, summaryData, collectionSummary, telemetry) {
   const topIncident = (FINDINGS.incidents || [])[0];
+  const disposition = caseData.triage_disposition || summaryData.triage_disposition || FINDINGS.triage_disposition || {};
   const responsePriority = toPriority(caseData.response_priority || summaryData.response_priority || 'P4');
   const impactedHosts = collectAffectedEntities(
     caseData.hosts || [],
@@ -548,6 +704,12 @@ function renderExecutiveSummary(caseData, summaryData, collectionSummary, teleme
   document.getElementById('executive-summary-subtitle').textContent = `Case ${caseData.case_name || ''} generated ${GENERATED_AT}`;
   document.getElementById('executive-impact').innerHTML = impactText;
   document.getElementById('executive-confidence').innerHTML = confidenceText;
+  document.getElementById('executive-disposition').textContent = disposition.disposition || 'Not yet determined';
+  document.getElementById('executive-disposition-confidence').textContent =
+    `Confidence: ${disposition.confidence || 'unknown'} (${confidencePercent(disposition.confidence_score)}%)`;
+  document.getElementById('executive-disposition-reasons').innerHTML =
+    (Array.isArray(disposition.reasons) ? disposition.reasons : []).slice(0, 4)
+      .map(reason => `<li>${esc(reason)}</li>`).join('');
 
   const scopeParts = [];
   impactedHosts.forEach(host => scopeParts.push(entityChipHtml('host', host, `Host: ${host}`)));
@@ -555,7 +717,10 @@ function renderExecutiveSummary(caseData, summaryData, collectionSummary, teleme
   document.getElementById('executive-scope').innerHTML = scopeParts.length
     ? scopeParts.join(' ')
     : '<span class="muted">No host/user scope metadata available.</span>';
-  document.getElementById('executive-time-range').textContent = `Observed activity: ${bounds.first} -> ${bounds.last}`;
+  document.getElementById('executive-time-range').textContent = ['persistence_snapshot', 'forensic_artifacts'].includes(collectionSummary.source_kind)
+    ? `Artifacts collected: ${(caseData.forensic_summary || {}).observed_at || 'unknown'}. Recorded activity appears in the artifact view with its source meaning.`
+    : `Observed event activity: ${bounds.first} -> ${bounds.last}`;
+  document.getElementById('executive-scope-detail').innerHTML = evidenceScopeHtml(caseData.evidence_scope || {});
 
   const collectionSummaryText = collectionSummary.summary || 'Collection quality metadata not provided.';
   document.getElementById('executive-collection-summary').textContent = collectionSummaryText;
@@ -565,11 +730,14 @@ function renderExecutiveSummary(caseData, summaryData, collectionSummary, teleme
   if (presentTelemetry.length) collectionDetails.push(`Present telemetry: ${presentTelemetry.join(', ')}`);
   if (missingTelemetry.length) collectionDetails.push(`Missing telemetry: ${missingTelemetry.join(', ')}`);
   if (collectionSummary.warning_count) collectionDetails.push(`Collection warnings: ${collectionSummary.warning_count}`);
+  if (collectionSummary.partial_sources?.length) collectionDetails.push(`Partial reads: ${collectionSummary.partial_sources.join(', ')}`);
+  if (collectionSummary.unavailable_sources?.length) collectionDetails.push(`Unreadable channels: ${collectionSummary.unavailable_sources.join(', ')}`);
+  if (collectionSummary.fallback_permission_sources?.length) collectionDetails.push(`Fallback used after denied API access: ${collectionSummary.fallback_permission_sources.join(', ')}`);
   if (collectionSummary.fallback_used) collectionDetails.push('Collection note: parser or API fallback was used.');
   if (!collectionDetails.length) collectionDetails.push('No collection gaps or warnings recorded.');
   document.getElementById('executive-collection-details').innerHTML = collectionDetails.map(line => `<li>${esc(line)}</li>`).join('');
 
-  const actions = executiveActions(topIncident);
+  const actions = uniqueValues([...(disposition.recommended_next || []), ...executiveActions(topIncident)]).slice(0, 6);
   document.getElementById('executive-actions').innerHTML = actions.map(action => `<li>${esc(action)}</li>`).join('');
   bindFilterButtons(document.getElementById('executive-summary-card'));
 }
@@ -656,7 +824,10 @@ function renderOverview() {
     parsed_event_count: liveSummary.parsed_event_count || 0,
     warning_count: liveSummary.warning_count || 0,
     warning_sources: liveSummary.warning_channels || [],
+    partial_sources: liveSummary.partial_channels || [],
     permission_denied_sources: liveSummary.permission_denied_channels || [],
+    unavailable_sources: liveSummary.unavailable_channels || [],
+    fallback_permission_sources: liveSummary.fallback_permission_channels || [],
     fallback_used: (liveSummary.fallback_channels || 0) > 0,
     telemetry_missing: telemetry.missing || [],
     recommendations: liveSummary.recommendations || []
@@ -702,10 +873,13 @@ function renderOverview() {
   if (!topIncident) {
     spotlight.innerHTML = `
       <h3>No incidents identified</h3>
-      <p class="subtle">The report contains signals and findings, but nothing was promoted to an incident narrative.</p>
+      <p class="subtle">${s.signal_count || s.finding_count ? 'The report contains signals or findings requiring review.' : 'No findings were promoted. Review available observations and collection gaps.'}</p>
       ${detailList('Collection quality', collectionSummary.summary ? [collectionSummary.summary] : [])}
       ${detailList('Collection warning sources', collectionSummary.warning_sources || [])}
+      ${detailList('Partial reads', collectionSummary.partial_sources || [])}
       ${detailList('Collection permission issues', collectionSummary.permission_denied_sources || [])}
+      ${detailList('Unreadable channels', collectionSummary.unavailable_sources || [])}
+      ${detailList('Fallback after denied access', collectionSummary.fallback_permission_sources || [])}
       ${detailList('Collection recommendations', collectionSummary.recommendations || [])}
       ${detailList('Telemetry gaps', collectionSummary.telemetry_missing || telemetry.missing || [])}
       ${detailList('Collection notes', collectionSummary.fallback_used ? ['Parser or API fallback was used during collection.'] : [])}
@@ -735,7 +909,10 @@ function renderOverview() {
       ${topIncident.recommended_pivots?.length ? `<div class="inline-pills"><strong>Recommended pivots:</strong> ${passivePills(topIncident.recommended_pivots)}</div>` : ''}
       ${detailList('Collection quality', collectionSummary.summary ? [collectionSummary.summary] : [])}
       ${detailList('Collection warning sources', collectionSummary.warning_sources || [])}
+      ${detailList('Partial reads', collectionSummary.partial_sources || [])}
       ${detailList('Collection permission issues', collectionSummary.permission_denied_sources || [])}
+      ${detailList('Unreadable channels', collectionSummary.unavailable_sources || [])}
+      ${detailList('Fallback after denied access', collectionSummary.fallback_permission_sources || [])}
       ${detailList('Collection recommendations', collectionSummary.recommendations || [])}
       ${detailList('Collection notes', collectionSummary.fallback_used ? ['Parser or API fallback was used during collection.'] : [])}
       ${detailList('Containment guidance', topIncident.containment_guidance || [])}
@@ -840,7 +1017,7 @@ function renderTimeline() {
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${esc(row.timestamp || 'unknown')}</td>
+      <td>${esc(row.timestamp || 'unknown')}${row.time_semantics === 'collection_snapshot' ? '<div class="subtle">Collection snapshot; execution unconfirmed</div>' : row.type === 'artifact' ? `<div class="subtle">${esc(row.time_semantics)}</div>` : ''}</td>
       <td><span class="chip passive">${esc(row.type || 'unknown')}</span></td>
       <td>${entityChipHtml('host', row.host, row.host_display || present(row.host))}</td>
       <td>${entityChipHtml('user', row.user_canonical || row.user, row.user_display || present(row.user))}</td>
@@ -858,7 +1035,7 @@ function renderTimeline() {
       </td>
       <td>
         <div><strong>${esc(row.display_label || row.id)}</strong> · ${esc(row.title || '')}</div>
-        <div class="${severityClass(row.severity)}">${esc(row.severity || 'unknown')} / ${esc(row.confidence || 'unknown')}</div>
+        <div class="${severityClass(row.severity)}">${row.type === 'artifact' ? 'Observation; unscored' : `${esc(row.severity || 'unknown')} / ${esc(row.confidence || 'unknown')}`}</div>
         <div class="subtle">${esc(row.summary || '')}</div>
         ${hasValue(row.technique) ? `<div class="subtle">Technique: ${esc(row.technique)}</div>` : ''}
         ${hasValue(row.recommended_next) ? `<details><summary>Recommended next step</summary><div class="details">${esc(row.recommended_next)}</div></details>` : ''}
@@ -870,41 +1047,112 @@ function renderTimeline() {
   });
 }
 
+let graphSteps = [];
+let graphTimer = null;
+
+function graphNodeLabel(data) {
+  const value = String(data.label || data.value || '');
+  return `${data.type_label || data.type || ''}\n${value.length > 42 ? value.slice(0, 40) + '…' : value}`;
+}
+
+function graphTime(value) {
+  return value ? String(value).replace('T', ' ').slice(0, 19) : 'time unknown';
+}
+
 function renderGraph() {
   if (cy) return;
   const pivot = document.getElementById('pivot-details');
   if (!window.cytoscape || !(GRAPH.nodes || []).length) {
-    pivot.textContent = 'Graph data unavailable.';
+    pivot.textContent = window.cytoscape
+      ? 'Graph data unavailable.'
+      : 'The graph library is not bundled in this report. Entity data remains in graph.json.';
     return;
   }
-
+  const nodes = (GRAPH.nodes || []).map(node => ({ data: { ...node.data, display: graphNodeLabel(node.data) } }));
   cy = cytoscape({
     container: document.getElementById('graph'),
-    elements: [...(GRAPH.nodes || []), ...(GRAPH.edges || [])],
+    elements: [...nodes, ...(GRAPH.edges || [])],
     style: [
-      { selector: 'node', style: { 'label': 'data(label)', 'font-size': 10, 'background-color': '#1d4ed8', 'color': '#111', 'text-valign': 'top', 'text-margin-y': -6, 'text-wrap': 'wrap', 'text-max-width': 90 } },
-      { selector: 'edge', style: { 'width': 2, 'line-color': '#94a3b8', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#94a3b8', 'curve-style': 'bezier' } },
-      { selector: 'node[type = "ip"]', style: { 'background-color': '#ef4444' } },
-      { selector: 'node[type = "user"]', style: { 'background-color': '#f59e0b' } },
-      { selector: 'node[type = "host"]', style: { 'background-color': '#16a34a' } },
-      { selector: 'node[type = "service"]', style: { 'background-color': '#7c3aed' } },
-      { selector: 'node[type = "process"]', style: { 'background-color': '#0ea5e9' } },
-      { selector: 'node[type = "command"]', style: { 'background-color': '#475569', 'color': '#fff' } }
+      { selector: 'node', style: { 'label': 'data(display)', 'font-size': 12, 'background-color': '#64748b', 'color': '#111827', 'text-valign': 'bottom', 'text-margin-y': 6, 'text-wrap': 'wrap', 'text-max-width': 160, 'text-background-color': '#fff', 'text-background-opacity': 0.9, 'text-background-padding': 2, 'width': 40, 'height': 40, 'border-width': 2, 'border-color': '#e2e8f0', 'transition-property': 'opacity', 'transition-duration': '0.35s' } },
+      { selector: 'edge', style: { 'label': 'data(label)', 'font-size': 10, 'text-margin-y': -8, 'color': '#334155', 'text-rotation': 'autorotate', 'text-background-color': '#fff', 'text-background-opacity': 0.9, 'text-background-padding': 1, 'width': 'mapData(count, 1, 10, 2, 6)', 'line-color': '#94a3b8', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#94a3b8', 'curve-style': 'bezier', 'transition-property': 'opacity, line-color', 'transition-duration': '0.35s' } },
+      { selector: 'node[type = "host"]', style: { 'background-color': '#16a34a', 'shape': 'round-rectangle', 'width': 44, 'height': 34 } },
+      { selector: 'node[type = "user"]', style: { 'background-color': '#d97706' } },
+      { selector: 'node[type = "ip"]', style: { 'background-color': '#dc2626', 'shape': 'diamond' } },
+      { selector: 'node[type = "service"]', style: { 'background-color': '#2563eb', 'shape': 'hexagon' } },
+      { selector: 'node[type = "process"]', style: { 'background-color': '#0891b2' } },
+      { selector: 'node[type = "command"]', style: { 'background-color': '#475569', 'shape': 'round-tag' } },
+      { selector: 'node[type = "registry"]', style: { 'background-color': '#9333ea', 'shape': 'barrel' } },
+      { selector: 'node[role = "entry_point"]', style: { 'border-width': 5, 'border-color': '#f97316' } },
+      { selector: 'node[role = "suspected_attacker"]', style: { 'border-width': 5, 'border-color': '#991b1b' } },
+      { selector: 'node[role = "pivot_point"]', style: { 'border-width': 5, 'border-color': '#111827', 'font-weight': 'bold' } },
+      { selector: '.future', style: { 'opacity': 0.08 } },
+      { selector: 'edge.current', style: { 'line-color': '#f97316', 'target-arrow-color': '#f97316', 'width': 5 } },
+      { selector: ':selected', style: { 'overlay-color': '#2563eb', 'overlay-opacity': 0.15 } },
     ],
-    layout: { name: 'cose', animate: false, padding: 20 }
+    maxZoom: 1.6,
+    // Interactions point from actors to what they touched, so a layered layout reads top-down.
+    layout: { name: 'preset' }
   });
-
+  const roots = cy.nodes().roots();
+  cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.9, padding: 40, avoidOverlap: true,
+              roots: roots.length ? roots : cy.nodes().max(node => node.degree()).ele }).run();
+  if (cy.zoom() > 1.1) { cy.zoom(1.1); cy.center(); }
+  // Replay order: when each interaction was first seen; undated ones last.
+  graphSteps = cy.edges().toArray().sort((a, b) => String(a.data('first_seen') || '~').localeCompare(String(b.data('first_seen') || '~')));
+  const slider = document.getElementById('graph-step');
+  slider.max = String(graphSteps.length);
+  slider.value = String(graphSteps.length);
   cy.on('tap', 'node', function(evt) {
     const data = evt.target.data();
-    pivot.textContent = JSON.stringify(data, null, 2);
-    if (['host', 'user', 'ip'].includes(data.type)) {
-      setFilter(data.type, data.value || data.label || '');
-    }
+    pivot.innerHTML = graphFacts(data.type_label || data.type, data.value || data.label, data);
+    if (['host', 'user', 'ip'].includes(data.type)) setFilter(data.type, data.value || data.label || '');
   });
-
   cy.on('tap', 'edge', function(evt) {
-    pivot.textContent = JSON.stringify(evt.target.data(), null, 2);
+    const data = evt.target.data();
+    const source = cy.getElementById(data.source).data(), target = cy.getElementById(data.target).data();
+    pivot.innerHTML = graphFacts(data.relation || data.type, `${source.label} → ${target.label}`, data);
   });
+}
+
+function graphFacts(kind, value, data) {
+  return `<dl class="graph-facts"><dt>${esc(kind)}</dt><dd>${esc(value)}</dd>
+    <dt>First seen</dt><dd>${esc(graphTime(data.first_seen))}</dd><dt>Last seen</dt><dd>${esc(graphTime(data.last_seen))}</dd>
+    <dt>Alerts</dt><dd>${esc(data.count || 0)}</dd>
+    ${(data.rules || []).length ? `<dt>Detections</dt><dd>${data.rules.map(esc).join('<br>')}</dd>` : ''}
+    ${data.role_label ? `<dt>Role</dt><dd>${esc(data.role_label)}</dd>` : ''}</dl>`;
+}
+
+function showGraphStep(step, highlight) {
+  if (!cy) return;
+  const shown = new Set();
+  cy.elements().removeClass('future current');
+  graphSteps.forEach((edge, index) => {
+    if (index < step) { shown.add(edge.data('source')); shown.add(edge.data('target')); }
+    else edge.addClass('future');
+  });
+  cy.nodes().forEach(node => { if (step < graphSteps.length && !shown.has(node.id())) node.addClass('future'); });
+  const label = document.getElementById('graph-step-label');
+  if (step >= graphSteps.length) { label.textContent = 'All interactions shown.'; return; }
+  if (step === 0) { label.textContent = 'Start: press Replay or drag to step through interactions in time order.'; return; }
+  const edge = graphSteps[step - 1];
+  if (highlight) edge.addClass('current');
+  const source = cy.getElementById(edge.data('source')).data('label'), target = cy.getElementById(edge.data('target')).data('label');
+  label.textContent = `${step}/${graphSteps.length} · ${graphTime(edge.data('first_seen'))} · ${source} → ${target}: ${edge.data('label')}`;
+}
+
+function toggleGraphReplay() {
+  const button = document.getElementById('graph-play');
+  const slider = document.getElementById('graph-step');
+  if (graphTimer) { clearInterval(graphTimer); graphTimer = null; button.textContent = '▶ Replay'; return; }
+  let step = Number(slider.value) >= graphSteps.length ? 0 : Number(slider.value);
+  button.textContent = 'Pause';
+  showGraphStep(step, true);
+  graphTimer = setInterval(() => {
+    step += 1;
+    slider.value = String(step);
+    showGraphStep(step, true);
+    if (step >= graphSteps.length) { clearInterval(graphTimer); graphTimer = null; button.textContent = '▶ Replay'; }
+  }, 1200);
 }
 
 function renderRawEvents() {
@@ -963,11 +1211,56 @@ function renderRawEvents() {
   });
 }
 
+function renderArtifacts() {
+  const summary = (FINDINGS.case || {}).forensic_summary || {};
+  const observations = FINDINGS.forensic_observations || [];
+  const query = (document.getElementById('artifact-search').value || '').toLowerCase();
+  const tbody = document.getElementById('artifact-body');
+  const persistenceOnly = summary.kind === 'windows_persistence_snapshot';
+  document.getElementById('artifact-tab').textContent = persistenceOnly ? 'Persistence Snapshot' : 'Forensic Artifacts';
+  document.getElementById('artifact-heading').textContent = persistenceOnly ? 'Observed Persistence Configuration' : 'Recorded Forensic Activity';
+  document.getElementById('artifact-summary').textContent = summary.kind
+    ? `${summary.observation_count} observation(s); supplied-input processing: ${summary.completeness}. Showing up to 500 display records. Complete observations: ${summary.artifact_path}. ${(summary.warnings || []).join(' ')}`
+    : 'No forensic artifact bundle was supplied.';
+  tbody.innerHTML = '';
+  observations.filter(observation => !query || JSON.stringify(observation).toLowerCase().includes(query)).slice(0, 500).forEach(observation => {
+    const details = observation.details || {};
+    const row = document.createElement('tr');
+    const name = details.name || details.target_path || details.current_path || '';
+    const location = details.location || (details.url_chain || []).join(' → ');
+    const description = details.command || (observation.kind === 'browser_download' ? `State: ${details.download_state}; bytes: ${details.received_bytes}/${details.total_bytes}; opened: ${details.opened}` : observation.interpretation);
+    row.innerHTML = `<td>${esc(observation.timestamp || 'unrecorded')}<div class="subtle">${esc(observation.time_semantics)}</div></td><td>${esc(observation.observed_at)}</td><td>${esc(observation.host)}</td><td>${esc(observation.kind)}</td><td>${esc(name)}<div class="subtle">${esc(location)}</div></td><td>${esc(description)}</td><td><details><summary>Source record ${esc(observation.source_record)}</summary><div class="details">${esc(JSON.stringify(observation, null, 2))}</div></details></td>`;
+    tbody.appendChild(row);
+  });
+  if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="7" class="muted">No observations match this search.</td></tr>';
+}
+
+function renderRelationships() {
+  const correlation = (FINDINGS.case || {}).forensic_correlation || {};
+  const relationships = FINDINGS.evidence_relationships || [];
+  const query = (document.getElementById('artifact-search').value || '').toLowerCase();
+  const tbody = document.getElementById('relationship-body');
+  document.getElementById('relationship-summary').textContent = correlation.evaluated
+    ? `${correlation.relationship_count} link(s); ${correlation.cross_source_finding_count} cross-source finding(s). Showing up to 500. Complete links: ${correlation.artifact_path}.`
+    : 'Cross-source links are evaluated only when event records and forensic artifacts are both supplied.';
+  tbody.innerHTML = '';
+  relationships.filter(link => !query || JSON.stringify(link).toLowerCase().includes(query)).slice(0, 500).forEach(link => {
+    const source = link.source || {};
+    const target = link.target || {};
+    const fields = (link.matched_fields || []).map(field => `${esc(field.event_field)} = ${esc(field.artifact_field)}: ${esc(field.value || `${field.event_value} / ${field.artifact_value}`)}`).join('<br>');
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${esc(link.link_class)}<div class="subtle">${esc((link.rule || {}).name)} v${esc((link.rule || {}).version)}</div></td><td>Event ${esc(source.event_id)} record ${esc(source.record_id)}<div class="subtle">${esc(source.timestamp)} · ${esc(source.process)}</div></td><td>${esc(target.artifact_kind)} record ${esc(target.source_record)}<div class="subtle">${esc(target.timestamp)} (${esc(target.time_semantics)})</div></td><td>${fields}</td><td>${(link.does_not_establish || []).map(esc).join('<br>')}<details><summary>Link record</summary><div class="details">${esc(JSON.stringify(link, null, 2))}</div></details></td>`;
+    tbody.appendChild(row);
+  });
+  if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="5" class="muted">No evidence links.</td></tr>';
+}
+
 function renderFilterSummaries() {
   const html = filterSummaryHtml();
   document.getElementById('filter-summary').innerHTML = html;
   document.getElementById('incident-filter-summary').innerHTML = html;
-  document.getElementById('timeline-filter-summary').innerHTML = html;
+  const omitted = (TIMELINE.summary || {}).omitted_artifact_rows || 0;
+  document.getElementById('timeline-filter-summary').innerHTML = html + (omitted ? `<p class="subtle">${esc(omitted)} older artifact row(s) are not embedded in this report; the complete timeline is in ${esc(TIMELINE.summary.complete_timeline)}.</p>` : '');
   document.getElementById('raw-filter-summary').innerHTML = html;
   bindFilterButtons(document);
 }
@@ -979,6 +1272,8 @@ function renderAll() {
   renderMitreMatrix();
   renderTimeline();
   renderRawEvents();
+  renderArtifacts();
+  renderRelationships();
 }
 
 renderAll();
@@ -992,7 +1287,7 @@ renderAll();
         .replace("__TIMELINE_JSON__", _safe_json_for_script(timeline_data))
         .replace("__GRAPH_JSON__", _safe_json_for_script(graph_data))
         .replace("__GENERATED_AT__", _safe_json_for_script(generated))
-    )
+    ).replace("__GRAPH_LIBRARY__", _graph_library_tag(), 1)
 
     with open(output_path, "w", encoding="utf-8") as handle:
         handle.write(html)
@@ -1051,22 +1346,4 @@ def generate(events, alerts, chains, output_path: str, input_source: str):
     }
     graph_data = {"nodes": [], "edges": []}
 
-    temp_base = os.path.dirname(os.path.abspath(output_path))
-    findings_path = os.path.join(temp_base, "_legacy_findings_temp.json")
-    timeline_path = os.path.join(temp_base, "_legacy_timeline_temp.json")
-    graph_path = os.path.join(temp_base, "_legacy_graph_temp.json")
-
-    with open(findings_path, "w", encoding="utf-8") as handle:
-        json.dump(findings_data, handle)
-    with open(timeline_path, "w", encoding="utf-8") as handle:
-        json.dump(timeline_data, handle)
-    with open(graph_path, "w", encoding="utf-8") as handle:
-        json.dump(graph_data, handle)
-
-    generate_from_artifacts(findings_path, timeline_path, graph_path, output_path)
-
-    for path in (findings_path, timeline_path, graph_path):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+    generate_from_data(findings_data, timeline_data, graph_data, output_path)

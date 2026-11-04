@@ -81,6 +81,7 @@ LOOPBACK_EXEMPT_LATERAL_RULES = frozenset(
         "Renamed PsExec Service Pipes",
         "TSCLIENT Startup Folder Drop",
         "RDP Shadowing Enabled",
+        "RDP Session Hijack (tscon)",
         "Remote Service Creation Command",
         "OpenSSH Server Installed",
         "OpenSSH Server Enabled",
@@ -331,6 +332,14 @@ class FPFilter:
             "Local Group Enumeration",
             "Remote RPC Discovery",
             "Remote Print Spooler Pipe Access",
+            # These context detectors intentionally retain partial telemetry
+            # even when the underlying event has no target-account field.
+            # Without the explicit exemption, the generic empty-target
+            # system-account guard would hide useful signal-only evidence.
+            "Domain Account Enumeration (Directory Audit)",
+            "Domain Group Enumeration (Directory Audit)",
+            "Local Group Enumeration (Directory Audit)",
+            "File Deletion Activity",
         } and not self._is_system_user(alert.user):
             return False
 

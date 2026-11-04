@@ -9,7 +9,7 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from models.event_model import AttackChain, Finding, Incident, NormalizedEvent, Signal
-from triage_engine.id_utils import stable_id
+from corrobora.id_utils import stable_id
 
 BENIGN_IPS = {"", "-", "127.0.0.1", "::1", "0.0.0.0", "fe80::1"}
 REMOTE_CREDENTIAL_FINDINGS = {"Brute Force Attack", "Password Spray Attack", "MSSQL Password Spray", "Explicit Credential Use"}
@@ -128,6 +128,7 @@ SPECIFIC_FINDING_TITLES = {
     "CMSTP UAC Bypass",
     "Volatile SYSTEMROOT UAC Bypass",
     "UAC Bypass via DLL Side-Loading",
+    "DLL Side-Loading / Hijack",
     "WScript Manifest UAC Bypass",
     "Browser Credential Store Access",
     "TSCLIENT Startup Folder Drop",
@@ -214,6 +215,13 @@ def _from_attack_chains(chains: List[AttackChain], signals: List[Signal], findin
             end=chain.end_time,
         )
         if not signal_ids and not finding_ids:
+            continue
+        # Alerts that are merely close in time are not an attack chain. Without a
+        # promoted finding, require progression: two techniques across two tactics.
+        # (One installer registering three services formed a "high" incident on a
+        # real workstation from signals the promotion step had rejected.)
+        progression = len({alert.rule_name for alert in chain.alerts}) >= 2 and len(set(chain.tactics)) >= 2
+        if not finding_ids and not progression:
             continue
 
         entities = _entities_from_alerts(chain.alerts)
@@ -3268,6 +3276,19 @@ def _incident_details_from_finding(finding: Finding) -> Tuple[str, str, str, str
             summary,
             "Privilege Escalation -> Abuse Elevation Control Mechanism",
         )
+    if title == "DLL Side-Loading / Hijack":
+        target_process = finding.evidence.get("target_process", "") or finding.process or "a trusted process"
+        loaded_module = finding.evidence.get("loaded_module", "") or "an untrusted DLL"
+        summary = (
+            f"{target_process} on {finding.host or 'unknown host'} loaded {loaded_module}, which is consistent with "
+            "DLL side-loading or search-order hijacking."
+        )
+        return (
+            "dll_side_loading",
+            "DLL side-loading or hijack",
+            summary,
+            "Defense Evasion -> Hijack Execution Flow",
+        )
     if title == "WScript Manifest UAC Bypass":
         manifest_path = finding.evidence.get("manifest_path", "") or "a crafted wscript.exe.manifest"
         summary = (
@@ -3336,10 +3357,9 @@ def _incident_details_from_finding(finding: Finding) -> Tuple[str, str, str, str
         "critical_finding_promotion",
         finding.title or "Critical finding promoted to incident",
         finding.summary or finding.description,
-        " -> ".join(
-            part for part in [finding.evidence.get("source_rule", ""), finding.evidence.get("source_technique", "")]
-            if part
-        ),
+        " -> ".join(part for part in [finding.mitre_tactic, finding.mitre_technique] if part)
+        or finding.technique_summary
+        or finding.evidence.get("source_rule", ""),
     )
 
 

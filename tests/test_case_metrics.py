@@ -9,12 +9,12 @@ from pathlib import Path
 from correlation.incident_builder import build_incidents
 from models.event_model import Alert, Incident
 from reporting.json_export import export_case, export_raw_events_stream
-from triage_engine.adapters import alerts_to_signals_findings
-from triage_engine.campaigns import build_campaign_summary
-from triage_engine.cli import _write_incident_brief, _write_summary_txt
-from triage_engine.rule_metrics import build_rule_metrics, build_tuning_recommendations
-from triage_engine.service import _build_collection_quality_summary
-from triage_engine.telemetry import summarize_telemetry
+from corrobora.adapters import alerts_to_signals_findings
+from corrobora.campaigns import build_campaign_summary
+from corrobora.cli import _write_incident_brief, _write_summary_txt
+from corrobora.rule_metrics import build_rule_metrics, build_tuning_recommendations
+from corrobora.service import _build_collection_quality_summary
+from corrobora.telemetry import summarize_telemetry
 
 from tests.test_regressions import make_event
 
@@ -926,7 +926,7 @@ class CaseMetricTests(unittest.TestCase):
         temp_dir = tempfile.mkdtemp(prefix="triage-demo-redaction-")
         self.addCleanup(shutil.rmtree, temp_dir, True)
 
-        with mock.patch.dict(os.environ, {"TRIAGE_DEMO_REDACTION": "1"}, clear=False):
+        with mock.patch.dict(os.environ, {"CORROBORA_DEMO_REDACTION": "1"}, clear=False):
             summary_path = _write_summary_txt(temp_dir, case_meta, [], [], [])
             brief_path = _write_incident_brief(temp_dir, case_meta, [], [])
 

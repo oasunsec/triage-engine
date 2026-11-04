@@ -16,6 +16,63 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  forensic-foundation:
+    name: Forensic Foundation Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    env:
+      CORROBORA_DATA_DIR: ${{ github.workspace }}/runtime/test-output/forensic-gate-state
+      CORROBORA_CASES_DIR: ${{ github.workspace }}/runtime/test-output/forensic-gate-cases
+      CORROBORA_UPLOAD_DIR: ${{ github.workspace }}/runtime/test-output/forensic-gate-uploads
+      CORROBORA_ENV_FILE: ${{ github.workspace }}/runtime/test-output/forensic-gate-state/empty.env
+      TEMP: ${{ github.workspace }}/runtime/temp/forensic-gate
+      TMP: ${{ github.workspace }}/runtime/temp/forensic-gate
+      TMPDIR: ${{ github.workspace }}/runtime/temp/forensic-gate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Prepare contained runtime
+        run: python -c "import os; [os.makedirs(os.environ[name], exist_ok=True) for name in ('CORROBORA_DATA_DIR', 'CORROBORA_CASES_DIR', 'CORROBORA_UPLOAD_DIR', 'TEMP')]"
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[server,sigma,test]"
+
+      - name: Verify evidence, artifact intake, backups, and detection semantics
+        run: >-
+          python -m pytest -q --tb=short
+          tests/test_forensic_foundation.py tests/test_evidence_export_bundle.py
+          tests/test_evidence_source_adapters.py tests/test_backup_integrity.py
+          tests/test_sigma_semantics.py tests/test_artifact_collector_asset.py
+          tests/test_browser_artifacts.py tests/test_prefetch_artifacts.py
+          tests/test_prefetch_binary.py
+          tests/test_artifact_packager.py tests/test_artifact_expansion.py
+          tests/test_forensic_correlation.py tests/test_forensic_api.py
+          tests/test_task_xml_artifacts.py tests/test_registry_hive_artifacts.py tests/test_ntfs_artifacts.py
+          tests/test_workstation_benign.py tests/test_executable_inventory.py tests/test_workspace_delivery.py
+          tests/test_parser_availability.py tests/test_parser_parallel.py
+          tests/test_product_workflow.py tests/test_html_report.py
+          --basetemp=runtime/test-output/forensic-gate
+          --junitxml=runtime/test-output/forensic-gate.xml
+
+      - name: Preserve verification result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forensic-gate-${{ matrix.os }}-${{ matrix.python }}
+          path: runtime/test-output/forensic-gate.xml
+          if-no-files-found: warn
+
   api-regression:
     name: API Regression Gate
     runs-on: ubuntu-latest
@@ -77,7 +134,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[server,sigma]"
+          python -m pip install -e ".[server,sigma,test]"
 
       - name: Prepare Wave 2 benchmark inputs
         run: python scripts/prepare_benchmark_inputs.py --manifest config/benchmark/corpus.json
@@ -109,7 +166,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[server,sigma]"
+          python -m pip install -e ".[server,sigma,test]"
 
       - name: Prepare Wave 2 benchmark inputs
         run: python scripts/prepare_benchmark_inputs.py --manifest config/benchmark/corpus.json
@@ -118,16 +175,18 @@ jobs:
         run: python scripts/production_readiness.py
 
       - name: Upload production readiness report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: production-readiness-report
-          path: production_readiness.json
-          if-no-files-found: error
+          path: audit-artifacts/production_readiness.json
+          if-no-files-found: warn
 
   release-gate:
     name: Release Gate
     runs-on: ubuntu-latest
     needs:
+      - forensic-foundation
       - api-regression
       - performance-regression
       - benchmark-wave2
@@ -146,7 +205,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[server,sigma]"
+          python -m pip install -e ".[server,sigma,test]"
 
       - name: Download competitive report
         uses: actions/download-artifact@v4
@@ -158,7 +217,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: production-readiness-report
-          path: .
+          path: audit-artifacts
 
       - name: Run release gate
         run: python scripts/release_gate.py --config config/release_gate.ci.json --strict --report release_gate.json

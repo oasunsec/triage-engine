@@ -1,6 +1,15 @@
-# Triage Engine
+# Corrobora
 
-Windows endpoint investigation tool for EVTX files and local Windows collection. It creates findings, incidents, timelines, and HTML case reports.
+Offline Windows investigation for responders. Corrobora reads a machine's event logs and its
+forensic artifacts (Prefetch, registry hives with their transaction logs, scheduled tasks, `$MFT`
+and the USN journal), checks each against the other, and turns the result into a case: findings,
+incidents, a timeline, and links that say what the evidence shows and what it does not.
+
+The name is the job. An alert counts for more when an independent record corroborates it, such
+as a service install backed by the file on disk and a Prefetch run. Corrobora shows which claims
+are backed up and which are not.
+
+Formerly Triage Engine. The `triage` command and `TRIAGE_*` settings still work.
 
 ## What it does
 
@@ -8,11 +17,44 @@ Windows endpoint investigation tool for EVTX files and local Windows collection.
 - Collects local Windows telemetry
 - Runs built-in detections and optional Sigma rules
 - Groups alerts into findings and incidents
-- Tracks review status, owners, notes, and dispositions
+- Reads offline forensic copies: Prefetch, registry hives (including Amcache), scheduled task files, `$MFT` and the USN journal, persistence snapshots, and Chromium download history
+- Links event-log records to those artifacts and says what each link shows and does not show
+- Gives each host in a case its own verdict
+- Tracks review status, owners, notes, and dispositions, including decisions on evidence links
 - Writes HTML, Markdown, and JSON case outputs
 - Runs with Python or Docker
 
 ## Screenshots
+
+The screenshots below show one case: a public EVTX sample (`sysmon_1_11_exec_as_system_via_schedtask.evtx`) paired with synthetic, labelled artifacts. Nothing in them comes from a real host.
+
+### Investigation Overview
+
+Case priorities, review workload, and searchable case history.
+
+![Investigation Overview](./screenshots/workspace-overview.png)
+
+### Case Overview
+
+The triage disposition, next steps, and the host, user, and time range the evidence covers.
+
+![Case Overview](./screenshots/case-overview.png)
+
+### Source Coverage
+
+Which kinds of evidence were supplied, how many records each produced, and what could not be linked.
+
+![Source Coverage](./screenshots/source-coverage.png)
+
+### Evidence Links
+
+Each event-to-artifact link shows the matching fields, its class, what it does not establish, and the analyst's decision.
+
+![Evidence Links](./screenshots/workspace-evidence.png)
+
+### Dark Theme
+
+![Dark Theme](./screenshots/workspace-dark.png)
 
 ### Review Queue
 
@@ -20,21 +62,9 @@ Review status, ownership, and assignment.
 
 ![Review Queue](./screenshots/review-queue.png)
 
-### Baseline Case
-
-A quieter case used as a comparison point.
-
-![Baseline Case](./screenshots/baseline-case-overview.png)
-
-### Attack Case
-
-A case with findings, incidents, and analyst notes.
-
-![Attack Case](./screenshots/attack-case-overview.png)
-
 ### Finding Detail
 
-Finding status, disposition, owner, notes, and evidence.
+Findings with severity, confidence, host, user, and analyst review.
 
 ![Finding Detail](./screenshots/finding-detail.png)
 
@@ -66,14 +96,14 @@ Offline investigations and the dashboard run on Windows, Linux, and macOS. Live 
 ### Python on Windows
 
 ```powershell
-cd C:\path\to\triage-engine
-powershell -ExecutionPolicy Bypass -File .\start-triage.ps1 -BootstrapDeps
+cd C:\path\to\corrobora
+powershell -ExecutionPolicy Bypass -File .\start-corrobora.ps1 -BootstrapDeps
 ```
 
 ### Python on Linux or macOS
 
 ```bash
-cd ~/triage-engine
+cd ~/corrobora
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -91,13 +121,50 @@ Open `http://127.0.0.1:8000`.
 
 On first run, create the first admin account, run a baseline case, and run an attack case.
 
+On Linux, run the container as your own account so it can write `data/` and `cases/`:
+
+```bash
+mkdir -p data cases
+CORROBORA_CONTAINER_UID="$(id -u)" CORROBORA_CONTAINER_GID="$(id -g)" docker compose up --build
+```
+
+See the [deployment guide](./docs/deployment.md) for upgrades and remote access.
+
 ## Command line
 
 ```bash
-triage investigate --evtx /path/to/logs --case Baseline-Workstation-Case
+corrobora investigate --evtx /path/to/logs --case Baseline-Workstation-Case
 ```
 
 On Windows, use a Windows path such as `C:\path\to\logs`.
+
+## Forensic artifacts
+
+Package offline copies you collected, then investigate them alone or with event logs:
+
+```bash
+corrobora pack-artifacts --host HOST01 --observed-at 2026-10-23T18:50:00Z \
+  --prefetch-source /evidence/Prefetch --task-xml /evidence/Tasks \
+  --registry-hive /evidence/SYSTEM --hive-type system \
+  --output-dir runtime/output/host01-bundle
+corrobora investigate --evtx /evidence/logs --artifacts runtime/output/host01-bundle --case host01
+```
+
+Originals are hashed and kept. Each observation records its source file, record and what its timestamp means. See [forensic artifact intake](./docs/forensic-artifacts.md) and how the parsers were [checked on a real Windows 11 machine](./docs/real-evidence-validation.md).
+
+### Collect from a Windows machine
+
+From an elevated PowerShell on the machine under investigation, collect event logs, Prefetch,
+registry hives with their transaction logs, scheduled tasks, and the raw `$MFT`/`$J`. This only
+reads the system. The collector also writes a hashed manifest and an artifact bundle:
+
+```powershell
+.\scripts\collect-windows-evidence.ps1 -OutputDirectory D:\triage\host-01
+```
+
+Add `-ServerUrl https://your-triage-server -IngestToken tri_...` to send the collection straight to
+a triage server. The server re-checks every hash and opens the case. See
+[docs/collector-ingest.md](docs/collector-ingest.md).
 
 ## Case outputs
 
@@ -108,12 +175,13 @@ On Windows, use a Windows path such as `C:\path\to\logs`.
 - `timeline.json`
 - `graph.json`
 - `run_status.json`
+- `forensic_observations.json` and `evidence_relationships.json` when artifacts are supplied
 
 ## Configuration
 
 See the [configuration reference](./docs/configuration.md) for environment variables.
 
-For public screenshots and demos, set `TRIAGE_DEMO_REDACTION=1`. Keep local tuning in `config/tuning/local.json`; that file should stay out of source control.
+For public screenshots and demos, set `CORROBORA_DEMO_REDACTION=1`. Keep local tuning in `config/tuning/local.json`; that file should stay out of source control.
 
 ## Checks
 

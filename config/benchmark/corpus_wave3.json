@@ -1,0 +1,97 @@
+{
+  "name": "public-evtx-coverage-wave-3",
+  "triage": {
+    "cases_dir": "./cases",
+    "enable_sigma": false,
+    "no_fp_filter": false,
+    "tuning_paths": ["./config/tuning/local.example.json"],
+    "sigma_rules": [],
+    "extra_args": []
+  },
+  "samples": [
+    {
+      "id": "inhibit-recovery-wmi",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0040-Impact/T1490-Inhibit System Recovery/ID4688-Delete VSS backup (WMI).evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1490"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "impact", "recovery"]
+    },
+    {
+      "id": "inhibit-recovery-powershell",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0040-Impact/T1490-Inhibit System Recovery/ID800-4103-4104-Delete VSS backup (PowerShell).evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1490"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "impact", "powershell"]
+    },
+    {
+      "id": "inhibit-recovery-wbadmin",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0040-Impact/T1490-Inhibit System Recovery/ID4688-Delete Window backup (webadmin).evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1490", "T1070.001"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "impact", "backup"]
+    },
+    {
+      "id": "domain-trust-created",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1484-Domain or Tenant Policy Modification/ID 4865 4706 - trust added.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1484"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "active-directory", "trust"]
+    },
+    {
+      "id": "group-policy-modified",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1484.001-Domain Policy Modification-Group Policy Modification/ID5136-4662 sensitive GPO edited.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1484.001"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "active-directory", "gpo"]
+    },
+    {
+      "id": "asrep-roasting",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0006-Credential Access/T1558-Steal or Forge Kerberos Tickets/ID4768-Kerberos AS-REP Roasting.evtx",
+      "expected": "malicious",
+      "attack_techniques": ["T1558.004"],
+      "min_findings": 1,
+      "min_incidents": 1,
+      "tags": ["public-evtx", "credential-access", "kerberos"]
+    },
+    {
+      "id": "kerberoasting-rc4-supporting",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0006-Credential Access/T1558-Steal or Forge Kerberos Tickets/ID4769-Kerberoast ticket with low encryption.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1558.003"],
+      "tags": ["public-evtx", "credential-access", "supporting-only"]
+    },
+    {
+      "id": "startup-folder-redirect-supporting",
+      "path": "./repo_cache/sbousseaden_EVTX-ATTACK-SAMPLES/Persistence/persistence_startup_UserShellStartup_Folder_Changed_sysmon_13.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1547.001"],
+      "tags": ["public-evtx", "persistence", "supporting-only"]
+    },
+    {
+      "id": "special-group-domain-logon-supporting",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1078.002-Valid accounts-Domain accounts/ID4964-Login of a member of a special group.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1078.002"],
+      "notes": "Event 4964 identifies a monitored privileged-domain-account session but requires logon and process correlation before promotion.",
+      "tags": ["public-evtx", "valid-accounts", "supporting-only"]
+    },
+    {
+      "id": "golden-ticket-logon-telemetry-gap",
+      "path": "./repo_cache/mdecrevoisier_EVTX-to-MITRE-Attack/TA0006-Credential Access/T1558-Steal or Forge Kerberos Tickets/ID4624-Success login with Golden ticket.evtx",
+      "expected": "informational",
+      "attack_techniques": ["T1558.001"],
+      "notes": "A 4624 Kerberos logon alone cannot prove that the ticket was forged without directory or KDC context.",
+      "tags": ["public-evtx", "credential-access", "telemetry-gap"]
+    }
+  ]
+}

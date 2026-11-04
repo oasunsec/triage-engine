@@ -5,7 +5,7 @@ from correlation.incident_builder import build_incidents
 from detectors import credential_access, defense_evasion
 from detectors.fp_filter import FPFilter
 from models.event_model import Alert
-from triage_engine.adapters import alerts_to_signals_findings
+from corrobora.adapters import alerts_to_signals_findings
 
 from tests.test_regressions import make_event
 

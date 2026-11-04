@@ -3,7 +3,7 @@
 Drop Windows EVTX-focused Sigma `.yml` or `.yaml` rules in this folder and run:
 
 ```powershell
-python -m triage_engine.cli investigate --evtx <path> --enable-sigma
+python -m corrobora.cli investigate --evtx <path> --enable-sigma
 ```
 
 You can also point to specific files or directories with repeated `--sigma-rules` arguments.
@@ -11,7 +11,9 @@ You can also point to specific files or directories with repeated `--sigma-rules
 Current support is intentionally narrow:
 
 - equality and list membership
-- `contains`, `startswith`, `endswith`, `regex`
+- `contains`, `startswith`, and `endswith`
 - simple boolean `condition` expressions
+
+Regular-expression modifiers and other Sigma modifiers are rejected with a diagnostic.
 
 Sigma hits are imported as signals by default and still flow through suppression, deduplication, correlation, and incident promotion.

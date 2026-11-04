@@ -30,6 +30,14 @@ def deduplicate(alerts: List[Alert], window_seconds: int = 30) -> List[Alert]:
         if i in skip:
             continue
         count = 1
+        source_observations = []
+        def remember_source(alert):
+            if alert.event and alert.event.observation_id:
+                reference = {"observation_id": alert.event.observation_id, "source_file": alert.event.source_file,
+                             "source_sha256": alert.event.source_sha256, "record_id": alert.event.record_id}
+                if reference not in source_observations:
+                    source_observations.append(reference)
+        remember_source(a)
         # Look ahead for duplicates
         for j in range(i + 1, len(alerts_sorted)):
             b = alerts_sorted[j]
@@ -39,6 +47,7 @@ def deduplicate(alerts: List[Alert], window_seconds: int = 30) -> List[Alert]:
                     and b.user == a.user
                     and abs((b.timestamp - a.timestamp).total_seconds()) <= window_seconds):
                 count += 1
+                remember_source(b)
                 skip.add(j)
             elif b.rule_name != a.rule_name or b.host != a.host:
                 break
@@ -46,6 +55,8 @@ def deduplicate(alerts: List[Alert], window_seconds: int = 30) -> List[Alert]:
         if count > 1:
             a.description += f" [{count} occurrences]"
             a.evidence["deduplicated_count"] = count
+        if source_observations:
+            a.evidence["source_observations"] = source_observations
         merged.append(a)
 
     # Add back alerts without timestamps

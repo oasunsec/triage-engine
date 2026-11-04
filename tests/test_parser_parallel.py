@@ -3,11 +3,12 @@ import shutil
 import tempfile
 import time
 import unittest
+from datetime import timezone
 from pathlib import Path
 from unittest import mock
 
 from parser import evtx_reader
-from triage_engine.cli import _apply_parse_progress_update, _public_parse_progress
+from corrobora.cli import _apply_parse_progress_update, _public_parse_progress
 
 
 class ParserParallelTests(unittest.TestCase):
@@ -141,6 +142,44 @@ class ParserParallelTests(unittest.TestCase):
         self.assertEqual(generic_event.raw_xml, "")
         self.assertIn("xp_cmdshell", sql_event.raw_xml)
 
+    def test_parse_record_preserves_nested_userdata_attributes(self):
+        capi_xml = """<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+            <System>
+                <Provider Name="Microsoft-Windows-CAPI2"/>
+                <EventID>70</EventID>
+                <TimeCreated SystemTime="2020-07-11T13:21:11.6931030Z"/>
+                <Computer>wec02</Computer>
+                <Channel>Microsoft-Windows-CAPI2/Operational</Channel>
+            </System>
+            <UserData><CryptAcquireCertificatePrivateKey xmlns="Event_NS">
+                <Certificate fileRef="certificate.cer" subjectName="wec02.example"/>
+                <EventAuxInfo ProcessName="mimikatz.exe"/>
+            </CryptAcquireCertificatePrivateKey></UserData>
+        </Event>"""
+        event = evtx_reader._parse_record(capi_xml)
+        self.assertIsNotNone(event)
+        self.assertEqual(event.process_name, "mimikatz.exe")
+        self.assertEqual(event.event_data["Certificate_subjectName"], "wec02.example")
+        self.assertEqual(event.event_data["EventAuxInfo_ProcessName"], "mimikatz.exe")
+
+    def test_native_fallback_parses_wevtutil_event_stream_without_shell(self):
+        xml = """<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>
+            <Provider Name='Microsoft-Windows-TerminalServices-RemoteConnectionManager'/>
+            <EventID>1149</EventID><TimeCreated SystemTime='2021-12-16T10:25:32Z'/>
+            <Channel>Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational</Channel>
+            <Computer>host.example</Computer></System><UserData><EventXML xmlns='Event_NS'>
+            <Param1>analyst</Param1><Param2/><Param3>10.0.0.5</Param3>
+            </EventXML></UserData></Event>"""
+        completed = mock.Mock(returncode=0, stdout=xml + xml, stderr="")
+        with mock.patch.object(evtx_reader.shutil, "which", return_value="C:\\Windows\\System32\\wevtutil.exe"):
+            with mock.patch.object(evtx_reader.subprocess, "run", return_value=completed) as run:
+                events = evtx_reader._read_evtx_with_wevtutil("sample.evtx")
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].event_data["Param3"], "10.0.0.5")
+        command = run.call_args.args[0]
+        self.assertEqual(command[1], "qe")
+        self.assertNotIn("shell", run.call_args.kwargs)
+
     def test_progress_callback_receives_file_updates_in_order(self):
         temp_dir = tempfile.mkdtemp(prefix="triage-evtx-progress-")
         self.addCleanup(shutil.rmtree, temp_dir, True)
@@ -260,6 +299,134 @@ class ParserParallelTests(unittest.TestCase):
         self.assertEqual(public_progress["parsed_event_count"], 120)
         self.assertNotIn("_completed_parsed_events", public_progress)
 
+
+    def test_parse_record_normalizes_naive_and_offset_timestamps_to_utc(self):
+        template = """<Event xmlns=\"http://schemas.microsoft.com/win/2004/08/events/event\">
+            <System><EventID>1</EventID><TimeCreated SystemTime=\"{timestamp}\"/></System>
+        </Event>"""
+        naive = evtx_reader._parse_record(template.format(timestamp="2026-08-30T12:00:00"))
+        offset = evtx_reader._parse_record(template.format(timestamp="2026-08-30T12:00:00+02:00"))
+
+        self.assertIsNotNone(naive)
+        self.assertIsNotNone(offset)
+        self.assertEqual(naive.timestamp.tzinfo, timezone.utc)
+        self.assertEqual(offset.timestamp.tzinfo, timezone.utc)
+        self.assertEqual(naive.timestamp.isoformat(), "2026-08-30T12:00:00+00:00")
+        self.assertEqual(offset.timestamp.isoformat(), "2026-08-30T10:00:00+00:00")
+
+    def test_native_streaming_fallback_parses_concatenated_large_output(self):
+        import io
+
+        xml = """<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>
+            <EventID>5</EventID><TimeCreated SystemTime='2026-08-30T12:00:00Z'/>
+            <Computer>host-a</Computer><Channel>Security</Channel>
+        </System></Event>"""
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = io.BytesIO((xml + xml).encode("utf-8"))
+                self.stderr = io.BytesIO(b"")
+                self.returncode = 0
+                self.killed = False
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+        process = FakeProcess()
+        with mock.patch.object(evtx_reader.shutil, "which", return_value="wevtutil.exe"):
+            with mock.patch.object(evtx_reader.subprocess, "Popen", return_value=process) as popen:
+                events, records, skipped, truncated = evtx_reader._read_evtx_with_wevtutil_streaming("sample.evtx")
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(records, 2)
+        self.assertEqual(skipped, 0)
+        self.assertFalse(truncated)
+        self.assertEqual(popen.call_args.args[0][1], "qe")
+
+    def test_native_streaming_deadline_is_not_blocked_by_a_stalled_pipe(self):
+        import io
+        import threading
+
+        class BlockingStream:
+            def __init__(self):
+                self.released = threading.Event()
+
+            def read(self, _size):
+                self.released.wait()
+                return b""
+
+            def close(self):
+                self.released.set()
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = BlockingStream()
+                self.stderr = io.BytesIO(b"")
+                self.returncode = None
+                self.killed = False
+
+            def wait(self, timeout=None):
+                self.returncode = -9 if self.killed else 0
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+                self.stdout.released.set()
+
+        process = FakeProcess()
+        with mock.patch.object(evtx_reader.shutil, "which", return_value="wevtutil.exe"):
+            with mock.patch.object(evtx_reader.subprocess, "Popen", return_value=process):
+                with mock.patch.object(evtx_reader, "WEVTUTIL_STREAM_TIMEOUT_SECONDS", 0.05):
+                    started = time.monotonic()
+                    events, records, skipped, truncated = evtx_reader._read_evtx_with_wevtutil_streaming("sample.evtx")
+                    elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(events, [])
+        self.assertEqual(records, 0)
+        self.assertEqual(skipped, 0)
+        self.assertTrue(truncated)
+        self.assertTrue(process.killed)
+
+    def test_partial_native_reader_failures_emit_completeness_warning(self):
+        import io
+
+        xml = b"""<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><EventID>5</EventID>
+            <TimeCreated SystemTime='2026-08-30T12:00:00Z'/>
+            <Computer>host-a</Computer><Channel>Security</Channel></System></Event>"""
+
+        class BrokenStderr(io.BytesIO):
+            def read(self, *args):
+                raise OSError("synthetic pipe failure")
+
+        class FakeProcess:
+            def __init__(self, returncode, stream_error):
+                self.stdout = io.BytesIO(xml)
+                self.stderr = BrokenStderr() if stream_error else io.BytesIO(b"reader failed")
+                self.returncode = returncode
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+
+        for returncode, stream_error in [(1, False), (0, True)]:
+            with self.subTest(returncode=returncode, stream_error=stream_error):
+                updates = []
+                process = FakeProcess(returncode, stream_error)
+                with mock.patch.object(evtx_reader.os.path, "getsize", return_value=evtx_reader.WEVTUTIL_LARGE_FILE_THRESHOLD_BYTES), \
+                     mock.patch.object(evtx_reader.shutil, "which", return_value="wevtutil.exe"), \
+                     mock.patch.object(evtx_reader.subprocess, "Popen", return_value=process):
+                    events = evtx_reader.read_evtx("sample.evtx", progress_callback=updates.append)
+                self.assertEqual(len(events), 1)
+                warnings = [item for item in updates if item.get("status") == "file_warning"]
+                self.assertTrue(warnings)
+                self.assertIn("incomplete", warnings[0]["warning"])
 
 if __name__ == "__main__":
     unittest.main()

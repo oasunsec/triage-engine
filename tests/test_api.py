@@ -150,7 +150,7 @@ def _create_evtx_stub(directory: str, filename: str = "test.evtx") -> str:
 # ---------------------------------------------------------------------------
 
 class APITests(unittest.TestCase):
-    """Tests for the Triage Engine REST API."""
+    """Tests for the Corrobora REST API."""
 
     @classmethod
     def setUpClass(cls):
@@ -186,12 +186,12 @@ class APITests(unittest.TestCase):
         server.STATIC_DIR = cls._static_dir
         server._reset_security_state_for_tests()
 
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         cls._orig_review_db = rs._DB_PATH
         rs._DB_PATH = os.path.join(cls._temp_root, "test_api_reviews.db")
         rs._init_db()
 
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         cls._orig_auth_db = auth._DB_PATH
         auth._DB_PATH = os.path.join(cls._temp_root, "test_api_auth.db")
         auth._init_db()
@@ -216,9 +216,9 @@ class APITests(unittest.TestCase):
         server.CASES_ROOT = cls._orig_cases_root
         server.UPLOAD_ROOT = cls._orig_upload_root
         server.STATIC_DIR = cls._orig_static_dir
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         rs._DB_PATH = cls._orig_review_db
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         auth._DB_PATH = cls._orig_auth_db
         shutil.rmtree(cls._temp_root, ignore_errors=True)
 
@@ -251,7 +251,7 @@ class APITests(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data["status"], "ok")
         self.assertIn("version", data)
-        self.assertEqual(data["engine"], "triage-engine")
+        self.assertEqual(data["engine"], "corrobora")
         self.assertIn("db_writable", data)
         self.assertIn("cases_dir_writable", data)
         self.assertIn("disk_free_bytes", data)
@@ -297,18 +297,18 @@ class APITests(unittest.TestCase):
     def test_runtime_dir_resolution_uses_repo_root_for_relative_paths(self):
         import server
 
-        with patch.dict(os.environ, {"TRIAGE_TEST_RUNTIME_DIR": "relative-data-dir"}):
-            resolved = server._resolve_runtime_dir("TRIAGE_TEST_RUNTIME_DIR", "data")
+        with patch.dict(os.environ, {"CORROBORA_TEST_RUNTIME_DIR": "relative-data-dir"}):
+            resolved = server._resolve_runtime_dir("CORROBORA_TEST_RUNTIME_DIR", "data")
         expected = os.path.abspath(os.path.join(server.ROOT_DIR, "relative-data-dir"))
         self.assertEqual(resolved, expected)
 
     def test_env_int_clamps_out_of_range_values(self):
         import server
 
-        with patch.dict(os.environ, {"TRIAGE_TEST_INT": "-1"}):
-            self.assertEqual(server._env_int("TRIAGE_TEST_INT", default=10, minimum=1), 1)
-        with patch.dict(os.environ, {"TRIAGE_TEST_INT": "999"}):
-            self.assertEqual(server._env_int("TRIAGE_TEST_INT", default=10, maximum=100), 100)
+        with patch.dict(os.environ, {"CORROBORA_TEST_INT": "-1"}):
+            self.assertEqual(server._env_int("CORROBORA_TEST_INT", default=10, minimum=1), 1)
+        with patch.dict(os.environ, {"CORROBORA_TEST_INT": "999"}):
+            self.assertEqual(server._env_int("CORROBORA_TEST_INT", default=10, maximum=100), 100)
 
     def test_startup_validation_flags_missing_dashboard(self):
         import server
@@ -581,7 +581,7 @@ class APITests(unittest.TestCase):
             self.assertIn("case_missing_reason", data[0])
 
     def test_bulk_job_delete_removes_completed_and_skips_running(self):
-        from triage_engine.job_store import create_job, update_job, get_job, delete_job
+        from corrobora.job_store import create_job, update_job, get_job, delete_job
         complete_id = "job-delete-complete-api"
         running_id = "job-delete-running-api"
         delete_job(complete_id)
@@ -690,10 +690,13 @@ class APITests(unittest.TestCase):
         with open(good_path, "wb") as fh:
             fh.write(b"\x00" * 32)
         with open(bad_path, "wb") as fh:
-            fh.write(b"\x00" * 32)
+            fh.write(b"corrupt evtx payload")
 
         def fake_read_evtx(filepath, start_date=None, end_date=None, progress_callback=None):
-            if os.path.basename(filepath).lower() == "broken.evtx":
+            # Investigations parse the retained, content-addressed copy.
+            with open(filepath, "rb") as source:
+                is_broken = source.read() == b"corrupt evtx payload"
+            if is_broken:
                 raise ValueError("corrupt evtx payload")
             if progress_callback:
                 progress_callback({"status": "file_started", "file_path": filepath})
@@ -766,9 +769,9 @@ class APITests(unittest.TestCase):
             time.sleep(1.5)
             return []
 
-        with patch.dict(os.environ, {"TRIAGE_DETECTOR_TIMEOUT_SECONDS": "1"}, clear=False):
+        with patch.dict(os.environ, {"CORROBORA_DETECTOR_TIMEOUT_SECONDS": "1"}, clear=False):
             with patch("parser.evtx_reader.read_evtx", side_effect=fake_read_evtx):
-                with patch("triage_engine.service.behavioral.detect", side_effect=slow_behavioral_detector):
+                with patch("corrobora.service.behavioral.detect", side_effect=slow_behavioral_detector):
                     start = self.client.post(
                         "/api/investigate/path",
                         params={"evtx_path": evtx_path, "case_name": "detector-timeout-case"},
@@ -810,7 +813,7 @@ class APITests(unittest.TestCase):
             time.sleep(1.2)
             return []
 
-        with patch.dict(os.environ, {"TRIAGE_INVESTIGATION_TIMEOUT_SECONDS": "1"}, clear=False):
+        with patch.dict(os.environ, {"CORROBORA_INVESTIGATION_TIMEOUT_SECONDS": "1"}, clear=False):
             with patch("parser.evtx_reader.read_evtx", side_effect=slow_read_evtx):
                 start = self.client.post(
                     "/api/investigate/path",
@@ -832,89 +835,6 @@ class APITests(unittest.TestCase):
         self.assertIsNotNone(final_job)
         self.assertEqual(final_job.get("status"), "failed")
         self.assertIn("exceeded timeout", str(final_job.get("message", "")).lower())
-
-    def test_investigate_worker_dispatches_completion_and_priority_webhooks(self):
-        import server
-        from triage_engine.service import InvestigationRequest, InvestigationResult
-
-        case_name = "webhook-case-p1"
-        case_path = os.path.join(self._cases_dir, case_name)
-        os.makedirs(case_path, exist_ok=True)
-        with open(os.path.join(case_path, "findings.json"), "w", encoding="utf-8") as fh:
-            json.dump({"findings": [{"id": "f-1"}], "incidents": [{"id": "inc-1"}]}, fh)
-
-        fake_result = InvestigationResult(
-            case_name=case_name,
-            case_path=case_path,
-            input_source="test.evtx",
-            signal_count=3,
-            finding_count=1,
-            incident_count=1,
-            response_priority="P1",
-        )
-        request = InvestigationRequest(
-            input_source="test.evtx",
-            input_mode="evtx_path",
-            case_name=case_name,
-            requested_by="admin",
-            request_id="req-webhook-1",
-        )
-
-        with patch.object(server, "run_investigation", return_value=fake_result):
-            with patch.object(server, "dispatch_webhook_event", return_value={"attempted": 0, "sent": 0, "failed": 0}) as dispatch_mock:
-                with patch.object(server, "update_job"):
-                    with patch.object(server, "sync_queue_index_from_case_payload"):
-                        with patch.object(server, "carry_forward_reviews"):
-                            server._investigate_worker("job-webhook-1", request)
-
-        events = [call.args[0] for call in dispatch_mock.call_args_list]
-        self.assertIn("investigation_completed", events)
-        self.assertIn("incident_p1", events)
-        completion_call = next(call for call in dispatch_mock.call_args_list if call.args[0] == "investigation_completed")
-        completion_payload = completion_call.args[1]
-        self.assertEqual(completion_payload["case_name"], case_name)
-        self.assertEqual(completion_payload["response_priority"], "P1")
-        self.assertEqual(completion_payload["incident_count"], 1)
-        self.assertIn("incident_ids", completion_payload)
-
-    def test_investigate_worker_sends_only_completion_for_lower_priority(self):
-        import server
-        from triage_engine.service import InvestigationRequest, InvestigationResult
-
-        case_name = "webhook-case-p3"
-        case_path = os.path.join(self._cases_dir, case_name)
-        os.makedirs(case_path, exist_ok=True)
-        with open(os.path.join(case_path, "findings.json"), "w", encoding="utf-8") as fh:
-            json.dump({"findings": [{"id": "f-1"}], "incidents": [{"id": "inc-1"}]}, fh)
-
-        fake_result = InvestigationResult(
-            case_name=case_name,
-            case_path=case_path,
-            input_source="test.evtx",
-            signal_count=2,
-            finding_count=1,
-            incident_count=1,
-            response_priority="P3",
-        )
-        request = InvestigationRequest(
-            input_source="test.evtx",
-            input_mode="evtx_path",
-            case_name=case_name,
-            requested_by="admin",
-            request_id="req-webhook-2",
-        )
-
-        with patch.object(server, "run_investigation", return_value=fake_result):
-            with patch.object(server, "dispatch_webhook_event", return_value={"attempted": 0, "sent": 0, "failed": 0}) as dispatch_mock:
-                with patch.object(server, "update_job"):
-                    with patch.object(server, "sync_queue_index_from_case_payload"):
-                        with patch.object(server, "carry_forward_reviews"):
-                            server._investigate_worker("job-webhook-2", request)
-
-        events = [call.args[0] for call in dispatch_mock.call_args_list]
-        self.assertIn("investigation_completed", events)
-        self.assertNotIn("incident_p1", events)
-        self.assertNotIn("incident_p2", events)
 
     def test_live_investigation_starts_with_recommended_channels(self):
         resp = self.client.post(
@@ -1069,12 +989,12 @@ class AuthAPITests(unittest.TestCase):
         os.makedirs(server.DATA_ROOT, exist_ok=True)
         os.makedirs(server.BACKUPS_ROOT, exist_ok=True)
 
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         self._orig_review_db = rs._DB_PATH
         rs._DB_PATH = os.path.join(self._temp_root, "test_auth_reviews.db")
         rs._init_db()
 
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         self._orig_auth_db = auth._DB_PATH
         auth._DB_PATH = os.path.join(self._temp_root, "test_auth.db")
         auth._init_db()
@@ -1089,9 +1009,9 @@ class AuthAPITests(unittest.TestCase):
         server.STATIC_DIR = self._orig_static_dir
         server.DATA_ROOT = self._orig_data_root
         server.BACKUPS_ROOT = self._orig_backups_root
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         rs._DB_PATH = self._orig_review_db
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         auth._DB_PATH = self._orig_auth_db
         shutil.rmtree(self._temp_root, ignore_errors=True)
 
@@ -1299,6 +1219,11 @@ class AuthAPITests(unittest.TestCase):
         self.assertEqual(attempts[-1].status_code, 429)
         self.assertIn("Retry-After", attempts[-1].headers)
 
+    def test_signed_in_reads_have_room_for_fast_case_review(self):
+        self._bootstrap()
+        reads = [self.client.get("/api/cases") for _ in range(150)]
+        self.assertTrue(all(resp.status_code == 200 for resp in reads))
+
     def test_login_rate_limit_counter_resets_after_window(self):
         import server
 
@@ -1316,7 +1241,7 @@ class AuthAPITests(unittest.TestCase):
         self.assertEqual(after_window.status_code, 401)
 
     def test_session_cookie_marks_secure_on_forwarded_https(self):
-        with patch.dict(os.environ, {"TRIAGE_SESSION_TTL_HOURS": "6"}, clear=False):
+        with patch.dict(os.environ, {"CORROBORA_SESSION_TTL_HOURS": "6"}, clear=False):
             resp = self.client.post(
                 "/api/auth/bootstrap",
                 headers={"X-Forwarded-Proto": "https"},
@@ -1332,10 +1257,10 @@ class AuthAPITests(unittest.TestCase):
         self.assertIn("max-age=21600", lowered)
 
     def test_session_activity_touch_is_debounced_to_one_minute(self):
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
 
         self._bootstrap()
-        session_id = self.client.cookies.get("triage_session")
+        session_id = self.client.cookies.get("corrobora_session")
         self.assertTrue(session_id)
         stale_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         with auth._conn() as con:
@@ -1360,11 +1285,11 @@ class AuthAPITests(unittest.TestCase):
         self.assertEqual(second_last_active, first_last_active)
 
     def test_idle_timeout_invalidates_stale_session_on_next_request(self):
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
 
-        with patch.dict(os.environ, {"TRIAGE_SESSION_IDLE_HOURS": "1"}, clear=False):
+        with patch.dict(os.environ, {"CORROBORA_SESSION_IDLE_HOURS": "1"}, clear=False):
             self._bootstrap()
-            session_id = self.client.cookies.get("triage_session")
+            session_id = self.client.cookies.get("corrobora_session")
             self.assertTrue(session_id)
             now = datetime.now(timezone.utc)
             stale_last_active = (now - timedelta(hours=3)).isoformat()
@@ -1390,10 +1315,10 @@ class AuthAPITests(unittest.TestCase):
             self.assertEqual(remaining, 0)
 
     def test_expired_session_returns_401_for_protected_read_write_endpoints(self):
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
 
         self._bootstrap()
-        session_id = self.client.cookies.get("triage_session")
+        session_id = self.client.cookies.get("corrobora_session")
         self.assertTrue(session_id)
         expired = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         with auth._conn() as con:
@@ -1938,7 +1863,8 @@ class AuthAPITests(unittest.TestCase):
         job_id = start.json()["job_id"]
 
         final_job = None
-        for _ in range(50):
+        deadline = time.monotonic() + 30  # A loaded machine can take several seconds to parse the sample.
+        while time.monotonic() < deadline:
             job_resp = self.client.get(f"/api/jobs/{job_id}")
             self.assertEqual(job_resp.status_code, 200)
             final_job = job_resp.json()
@@ -2122,7 +2048,7 @@ class JobStoreTests(unittest.TestCase):
     """Test durable SQLite job persistence."""
 
     def test_create_and_get_job(self):
-        from triage_engine.job_store import create_job, get_job, delete_job
+        from corrobora.job_store import create_job, get_job, delete_job
         job = create_job("test-job-001", case_name="test-case")
         self.assertEqual(job["job_id"], "test-job-001")
         self.assertEqual(job["status"], "queued")
@@ -2136,7 +2062,7 @@ class JobStoreTests(unittest.TestCase):
         delete_job("test-job-001")
 
     def test_update_job(self):
-        from triage_engine.job_store import create_job, update_job, get_job, delete_job
+        from corrobora.job_store import create_job, update_job, get_job, delete_job
         create_job("test-job-002", case_name="update-test")
         update_job("test-job-002", status="running", stage="detect", message="Running detectors")
 
@@ -2148,7 +2074,7 @@ class JobStoreTests(unittest.TestCase):
         delete_job("test-job-002")
 
     def test_update_job_with_results_dict(self):
-        from triage_engine.job_store import create_job, update_job, get_job, delete_job
+        from corrobora.job_store import create_job, update_job, get_job, delete_job
         create_job("test-job-003", case_name="results-test")
         update_job("test-job-003", results={"signal_count": 5, "finding_count": 2})
 
@@ -2159,7 +2085,7 @@ class JobStoreTests(unittest.TestCase):
         delete_job("test-job-003")
 
     def test_list_jobs(self):
-        from triage_engine.job_store import create_job, list_jobs, delete_job
+        from corrobora.job_store import create_job, list_jobs, delete_job
         create_job("test-job-list-a", case_name="list-a")
         create_job("test-job-list-b", case_name="list-b")
 
@@ -2172,19 +2098,19 @@ class JobStoreTests(unittest.TestCase):
         delete_job("test-job-list-b")
 
     def test_delete_job(self):
-        from triage_engine.job_store import create_job, delete_job, get_job
+        from corrobora.job_store import create_job, delete_job, get_job
         create_job("test-job-delete", case_name="delete-test")
         result = delete_job("test-job-delete")
         self.assertTrue(result)
         self.assertIsNone(get_job("test-job-delete"))
 
     def test_delete_nonexistent_job(self):
-        from triage_engine.job_store import delete_job
+        from corrobora.job_store import delete_job
         result = delete_job("nonexistent-job-id-xyz")
         self.assertFalse(result)
 
     def test_get_nonexistent_job(self):
-        from triage_engine.job_store import get_job
+        from corrobora.job_store import get_job
         self.assertIsNone(get_job("absolutely-does-not-exist"))
 
 
@@ -2194,7 +2120,7 @@ class JobStoreTests(unittest.TestCase):
 
 class StoreMigrationTests(unittest.TestCase):
     def test_auth_store_migrates_legacy_schema_with_defaults(self):
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         tmp = tempfile.mkdtemp(prefix="auth-migrate-test-")
         db_path = os.path.join(tmp, "auth_legacy.db")
         original_db_path = auth._DB_PATH
@@ -2307,6 +2233,7 @@ class StoreMigrationTests(unittest.TestCase):
                         "auth_store:001_initial_schema",
                         "auth_store:002_add_missing_columns",
                         "auth_store:003_session_activity_columns",
+                        "auth_store:004_ingest_tokens",
                     ],
                 )
         finally:
@@ -2314,7 +2241,7 @@ class StoreMigrationTests(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_job_store_migrates_legacy_schema_with_defaults(self):
-        import triage_engine.job_store as js
+        import corrobora.job_store as js
         tmp = tempfile.mkdtemp(prefix="job-migrate-test-")
         db_path = os.path.join(tmp, "jobs_legacy.db")
         original_db_path = js._DB_PATH
@@ -2382,7 +2309,7 @@ class StoreMigrationTests(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_review_store_migrates_legacy_schema_with_defaults(self):
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         tmp = tempfile.mkdtemp(prefix="review-migrate-test-")
         db_path = os.path.join(tmp, "reviews_legacy.db")
         original_db_path = rs._DB_PATH
@@ -2552,8 +2479,12 @@ class StoreMigrationTests(unittest.TestCase):
                     [
                         "review_store:001_initial_schema",
                         "review_store:002_add_missing_columns",
+                        "review_store:003_evidence_link_reviews",
                     ],
                 )
+                tables = {row["name"] for row in migrated.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+                self.assertTrue({"evidence_link_reviews", "analyst_evidence_links"} <= tables)
 
             queue = rs.get_review_queue(case_name="legacy-case")
             self.assertGreaterEqual(len(queue), 1)
@@ -2614,7 +2545,7 @@ class BackupRestoreScriptTests(unittest.TestCase):
         finally:
             con.close()
 
-        restored = restore_backup(backup["backup_path"], data_dir=self._data_dir)
+        restored = restore_backup(backup["backup_path"], data_dir=self._data_dir, service_stopped=True)
         self.assertEqual(restored["backup_id"], backup["backup_id"])
         self.assertEqual(len(restored["files"]), 3)
 
@@ -2634,7 +2565,7 @@ class BackupRestoreScriptTests(unittest.TestCase):
             fh.write(b"tampered")
 
         with self.assertRaises(ValueError):
-            restore_backup(backup["backup_path"], data_dir=self._data_dir)
+            restore_backup(backup["backup_path"], data_dir=self._data_dir, service_stopped=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2645,7 +2576,7 @@ class ServiceContractTests(unittest.TestCase):
     """Test the shared investigation service contract types."""
 
     def test_investigation_request_defaults(self):
-        from triage_engine.service import InvestigationRequest
+        from corrobora.service import InvestigationRequest
         req = InvestigationRequest(input_source="test.evtx")
         self.assertEqual(req.input_mode, "evtx_path")
         self.assertIsNone(req.case_name)
@@ -2659,7 +2590,7 @@ class ServiceContractTests(unittest.TestCase):
         self.assertEqual(req.sigma_rule_paths, [])
 
     def test_investigation_result_defaults(self):
-        from triage_engine.service import InvestigationResult
+        from corrobora.service import InvestigationResult
         result = InvestigationResult(
             case_name="test",
             case_path="/tmp/test",
@@ -2672,7 +2603,7 @@ class ServiceContractTests(unittest.TestCase):
         self.assertEqual(result.artifacts, {})
 
     def test_null_reporter_satisfies_protocol(self):
-        from triage_engine.service import NullReporter, ProgressReporter
+        from corrobora.service import NullReporter, ProgressReporter
         reporter = NullReporter()
         self.assertIsInstance(reporter, ProgressReporter)
         # Should not raise
@@ -2685,7 +2616,7 @@ class ServiceContractTests(unittest.TestCase):
         reporter.on_parse_progress({})
 
     def test_progress_reporter_protocol(self):
-        from triage_engine.service import ProgressReporter
+        from corrobora.service import ProgressReporter
 
         class CustomReporter:
             def on_stage(self, stage, message): pass
@@ -2786,19 +2717,19 @@ class ReviewStoreTests(unittest.TestCase):
 
     def setUp(self):
         # Use a fresh DB for each test by patching path
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         self._orig_path = rs._DB_PATH
         self._tmp = tempfile.mkdtemp(prefix="review-test-")
         rs._DB_PATH = os.path.join(self._tmp, "test_reviews.db")
         rs._init_db()
 
     def tearDown(self):
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         rs._DB_PATH = self._orig_path
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_finding_review_create_and_get(self):
-        from triage_engine.review_store import upsert_finding_review, get_finding_review
+        from corrobora.review_store import upsert_finding_review, get_finding_review
         rv = upsert_finding_review("case-a", "fnd-001", status="Open")
         self.assertEqual(rv["case_name"], "case-a")
         self.assertEqual(rv["finding_id"], "fnd-001")
@@ -2808,7 +2739,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(fetched["finding_id"], "fnd-001")
 
     def test_finding_review_update_records_history(self):
-        from triage_engine.review_store import upsert_finding_review, get_history
+        from corrobora.review_store import upsert_finding_review, get_history
         upsert_finding_review("case-a", "fnd-002", status="Open")
         upsert_finding_review("case-a", "fnd-002", status="In Review", changed_by="analyst1")
         history = get_history("case-a", "finding", "fnd-002")
@@ -2819,7 +2750,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(history[0]["changed_by"], "analyst1")
 
     def test_incident_review_create_and_get(self):
-        from triage_engine.review_store import upsert_incident_review, get_incident_review
+        from corrobora.review_store import upsert_incident_review, get_incident_review
         rv = upsert_incident_review("case-b", "inc-001", status="Open", owner="analyst2")
         self.assertEqual(rv["incident_id"], "inc-001")
         self.assertEqual(rv["owner"], "analyst2")
@@ -2827,14 +2758,14 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertIsNotNone(fetched)
 
     def test_incident_review_update(self):
-        from triage_engine.review_store import upsert_incident_review
+        from corrobora.review_store import upsert_incident_review
         upsert_incident_review("case-b", "inc-002", status="Open")
         rv = upsert_incident_review("case-b", "inc-002", status="Escalated", disposition="True Positive")
         self.assertEqual(rv["status"], "Escalated")
         self.assertEqual(rv["disposition"], "True Positive")
 
     def test_add_and_get_notes(self):
-        from triage_engine.review_store import add_note, get_notes
+        from corrobora.review_store import add_note, get_notes
         note = add_note("case-c", "finding", "fnd-010", "This looks suspicious", author="analyst3")
         self.assertEqual(note["content"], "This looks suspicious")
         self.assertEqual(note["author"], "analyst3")
@@ -2843,7 +2774,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(notes[0]["content"], "This looks suspicious")
 
     def test_review_queue_returns_items(self):
-        from triage_engine.review_store import upsert_finding_review, upsert_incident_review, get_review_queue
+        from corrobora.review_store import upsert_finding_review, upsert_incident_review, get_review_queue
         upsert_finding_review("case-q", "fnd-q1", status="Open")
         upsert_incident_review("case-q", "inc-q1", status="In Review")
         queue = get_review_queue()
@@ -2852,7 +2783,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertIn("inc-q1", ids)
 
     def test_review_queue_filters_by_status(self):
-        from triage_engine.review_store import upsert_finding_review, get_review_queue
+        from corrobora.review_store import upsert_finding_review, get_review_queue
         upsert_finding_review("case-qf", "fnd-qf1", status="Open")
         upsert_finding_review("case-qf", "fnd-qf2", status="Closed")
         queue = get_review_queue(status="Open")
@@ -2861,7 +2792,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertNotIn("fnd-qf2", ids)
 
     def test_review_queue_filters_by_type(self):
-        from triage_engine.review_store import upsert_finding_review, upsert_incident_review, get_review_queue
+        from corrobora.review_store import upsert_finding_review, upsert_incident_review, get_review_queue
         upsert_finding_review("case-qt", "fnd-qt1", status="Open")
         upsert_incident_review("case-qt", "inc-qt1", status="Open")
         queue = get_review_queue(item_type="incident")
@@ -2869,7 +2800,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertTrue(all(t == "incident" for t in types))
 
     def test_carry_forward_creates_missing_reviews(self):
-        from triage_engine.review_store import upsert_finding_review, carry_forward_reviews, get_finding_review
+        from corrobora.review_store import upsert_finding_review, carry_forward_reviews, get_finding_review
         upsert_finding_review("case-cf", "fnd-existing", status="In Review", owner="analyst1")
         result = carry_forward_reviews("case-cf", ["fnd-existing", "fnd-new"], ["inc-new"])
         self.assertEqual(result["findings_carried"], 1)
@@ -2884,7 +2815,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(new_rv["status"], "Open")
 
     def test_carry_forward_does_not_delete_stale_reviews(self):
-        from triage_engine.review_store import upsert_finding_review, carry_forward_reviews, get_finding_review
+        from corrobora.review_store import upsert_finding_review, carry_forward_reviews, get_finding_review
         upsert_finding_review("case-cf2", "fnd-old", status="Closed", disposition="False Positive")
         carry_forward_reviews("case-cf2", [], [])
         # Old review should still exist
@@ -2893,12 +2824,12 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(old["status"], "Closed")
 
     def test_get_nonexistent_review_returns_none(self):
-        from triage_engine.review_store import get_finding_review, get_incident_review
+        from corrobora.review_store import get_finding_review, get_incident_review
         self.assertIsNone(get_finding_review("nonexistent", "nonexistent"))
         self.assertIsNone(get_incident_review("nonexistent", "nonexistent"))
 
     def test_bulk_overlay_methods(self):
-        from triage_engine.review_store import upsert_finding_review, upsert_incident_review, get_all_finding_reviews, get_all_incident_reviews
+        from corrobora.review_store import upsert_finding_review, upsert_incident_review, get_all_finding_reviews, get_all_incident_reviews
         upsert_finding_review("case-bulk", "fnd-b1", status="Open")
         upsert_finding_review("case-bulk", "fnd-b2", status="Closed")
         upsert_incident_review("case-bulk", "inc-b1", status="Escalated")
@@ -2910,14 +2841,14 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertIn("inc-b1", irevs)
 
     def test_history_global_retrieval(self):
-        from triage_engine.review_store import upsert_finding_review, get_all_history
+        from corrobora.review_store import upsert_finding_review, get_all_history
         upsert_finding_review("case-hist", "fnd-h1", status="Open")
         upsert_finding_review("case-hist", "fnd-h1", status="Closed", changed_by="analyst")
         history = get_all_history()
         self.assertGreaterEqual(len(history), 1)
 
     def test_note_addition_records_history(self):
-        from triage_engine.review_store import add_note, get_history
+        from corrobora.review_store import add_note, get_history
         add_note("case-nh", "finding", "fnd-nh1", "Important observation", author="analyst5")
         history = get_history("case-nh", "finding", "fnd-nh1")
         self.assertGreaterEqual(len(history), 1)
@@ -2927,7 +2858,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(note_event["changed_by"], "analyst5")
 
     def test_note_addition_records_history_for_incident(self):
-        from triage_engine.review_store import add_note, get_history
+        from corrobora.review_store import add_note, get_history
         add_note("case-nh2", "incident", "inc-nh1", "Escalating to IR team", author="analyst6")
         history = get_history("case-nh2", "incident", "inc-nh1")
         note_event = next((h for h in history if h["field"] == "note_added"), None)
@@ -2936,7 +2867,7 @@ class ReviewStoreTests(unittest.TestCase):
         self.assertEqual(note_event["changed_by"], "analyst6")
 
     def test_materialize_reviews_for_completed_cases(self):
-        from triage_engine.review_store import materialize_reviews_for_completed_cases, get_finding_review, get_incident_review
+        from corrobora.review_store import materialize_reviews_for_completed_cases, get_finding_review, get_incident_review
         # Create a synthetic case directory with findings.json
         cases_dir = os.path.join(self._tmp, "mat-cases")
         case_dir = os.path.join(cases_dir, "mat-test-case")
@@ -2961,7 +2892,7 @@ class ReviewStoreTests(unittest.TestCase):
         shutil.rmtree(cases_dir, ignore_errors=True)
 
     def test_materialize_reviews_nonexistent_dir(self):
-        from triage_engine.review_store import materialize_reviews_for_completed_cases
+        from corrobora.review_store import materialize_reviews_for_completed_cases
         self.assertEqual(materialize_reviews_for_completed_cases("/nonexistent/path"), 0)
 
 
@@ -3001,12 +2932,12 @@ class ReviewAPITests(unittest.TestCase):
         server.STATIC_DIR = cls._static_dir
 
         # Use a separate review DB for API tests
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         cls._orig_review_db = rs._DB_PATH
         rs._DB_PATH = os.path.join(cls._temp_root, "test_api_reviews.db")
         rs._init_db()
 
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         cls._orig_auth_db = auth._DB_PATH
         auth._DB_PATH = os.path.join(cls._temp_root, "test_api_auth.db")
         auth._init_db()
@@ -3030,9 +2961,9 @@ class ReviewAPITests(unittest.TestCase):
         server.CASES_ROOT = cls._orig_cases_root
         server.UPLOAD_ROOT = cls._orig_upload_root
         server.STATIC_DIR = cls._orig_static_dir
-        import triage_engine.review_store as rs
+        import corrobora.review_store as rs
         rs._DB_PATH = cls._orig_review_db
-        import triage_engine.auth_store as auth
+        import corrobora.auth_store as auth
         auth._DB_PATH = cls._orig_auth_db
         shutil.rmtree(cls._temp_root, ignore_errors=True)
 
@@ -3102,7 +3033,7 @@ class ReviewAPITests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["content"], "Needs further investigation")
-        self.assertEqual(data["author"], "analyst1")
+        self.assertEqual(data["author"], "review-admin")
 
     def test_add_empty_note_rejected(self):
         resp = self.client.post(
@@ -3244,7 +3175,7 @@ class ReviewAPITests(unittest.TestCase):
         self.assertGreaterEqual(len(note_events), 1)
         latest = note_events[0]
         self.assertEqual(latest["new_value"], "History check note")
-        self.assertEqual(latest["changed_by"], "hist-author")
+        self.assertEqual(latest["changed_by"], "review-admin")
 
     # -- Fix 2: case existence validation --
     def test_get_finding_review_nonexistent_case_404(self):

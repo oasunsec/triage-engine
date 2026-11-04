@@ -13,9 +13,21 @@ __pycache__/
 
 tests/
 repo_cache/
+tools/log-parser-v4/
+artifacts/reports/
 cases/
 uploads/
 data/
+.tmp/
+output/
+audit-cases/
+audit-artifacts/
+build/
+dist/
+.env
+.env.*
+!.env.example
+config/tuning/local.json
 
 *.evtx
 **/*.evtx

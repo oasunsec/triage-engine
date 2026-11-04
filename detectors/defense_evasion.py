@@ -4,7 +4,7 @@ import html
 import os
 import re
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 from models.event_model import Alert, NormalizedEvent
@@ -62,6 +62,15 @@ UAC_SIDELOAD_TARGETS: Dict[str, Dict[str, tuple]] = {
         "paths": (r"\windows\system32",),
     },
 }
+DLL_HIJACK_RULE_RE = re.compile(r"(?:dll\s*[-_ ]?\s*(?:side\s*load|hijack)|side\s*[-_ ]?\s*load)", re.IGNORECASE)
+DLL_PROXY_LAUNCHERS = {"rundll32.exe", "regsvr32.exe", "mshta.exe"}
+TRUSTED_DLL_PATH_MARKERS = (
+    "\\windows\\system32\\",
+    "\\windows\\syswow64\\",
+    "\\windows\\winsxs\\",
+    "\\program files\\",
+    "\\program files (x86)\\",
+)
 UAC_SUSPICIOUS_LAUNCHERS = {
     "powershell.exe",
     "pwsh.exe",
@@ -187,6 +196,118 @@ def _is_benign_csrss_control_routine(ev: NormalizedEvent) -> bool:
     )
 
 
+_MASQ_SYSTEM_BINARY_PARENTS: Dict[str, set] = {
+    "wermgr.exe": {"services.exe", "svchost.exe", "wininit.exe", "explorer.exe", "dwm.exe"},
+    "lsass.exe": {"wininit.exe"},
+    "winlogon.exe": {"smss.exe", "wininit.exe"},
+    "csrss.exe": {"smss.exe", "wininit.exe"},
+    "services.exe": {"wininit.exe"},
+    "wininit.exe": {"smss.exe"},
+    "svchost.exe": {"services.exe", "svchost.exe"},
+    "taskhost.exe": {"services.exe", "svchost.exe"},
+    "taskhostw.exe": {"services.exe", "svchost.exe"},
+    "dllhost.exe": {"svchost.exe", "services.exe", "dllhost.exe"},
+    "dwm.exe": {"wininit.exe"},
+    "fontdrvhost.exe": {"wininit.exe"},
+    "explorer.exe": {"userinit.exe", "winlogon.exe", "explorer.exe"},
+    "runtimebroker.exe": {"svchost.exe", "explorer.exe"},
+    "conhost.exe": None,
+    "smss.exe": None,
+}
+_MASQ_UNKNOWN_PARENTS = {"", "?", "unknown", "-", "system", "system idle process", "pid 4", "[system process]"}
+_MASQ_STANDARD_DIRS = ("\\windows\\system32", "\\windows\\syswow64")
+# Per-binary extra locations that are legitimate (e.g. explorer.exe lives at
+# C:\Windows\explorer.exe, not under System32).
+_MASQ_EXTRA_STANDARD_LOCATIONS: Dict[str, tuple] = {
+    "explorer.exe": ("\\windows\\explorer.exe",),
+}
+
+
+def _detect_masquerading(events: List[NormalizedEvent]) -> List[Alert]:
+    """Flag system-binary name masquerading (T1036.005) from path or lineage evidence.
+
+    A trusted system binary (wermgr.exe, svchost.exe, lsass.exe, ...) running from a
+    non-standard directory is the classic masquerade (T1036.005 "Match Legitimate Name
+    or Location").  Even at a standard location, an unexpected parent (for example
+    wermgr.exe launched by rundll32.exe) indicates the binary name is being reused for
+    identity camouflage.  Both cases are high severity because the name looks trusted
+    even when the actual process is attacker controlled.  conhost.exe and smss.exe are
+    exempted from parent-lineage analysis because their console/session parents vary
+    widely in real telemetry; for those we only rely on the path signal.
+    """
+    alerts: List[Alert] = []
+    seen: Set[Tuple[str, ...]] = set()
+    for ev in events:
+        if ev.event_id not in (1, 4688):
+            continue
+        image = ev.process_name or ""
+        child = _basename(image)
+        legit_parents = _MASQ_SYSTEM_BINARY_PARENTS.get(child)
+        if legit_parents is None and child not in _MASQ_SYSTEM_BINARY_PARENTS:
+            continue
+        image_l = image.lower()
+        standard_path = any(marker in image_l for marker in _MASQ_STANDARD_DIRS) or any(
+            marker in image_l for marker in _MASQ_EXTRA_STANDARD_LOCATIONS.get(child, ())
+        )
+        parent = _basename(ev.parent_process or ev.event_data.get("ParentImage", ""))
+        parent_known = parent and parent.lower() not in _MASQ_UNKNOWN_PARENTS
+        parent_suspicious = bool(
+            legit_parents is not None
+            and parent_known
+            and parent not in legit_parents
+        )
+        if standard_path and not parent_suspicious:
+            continue
+        if child in {"conhost.exe", "smss.exe"} and standard_path:
+            continue
+        host = ev.computer or "unknown host"
+        confidence = "high" if not standard_path else "medium"
+        key = ("masquerade", host.lower(), child, image_l, parent, confidence)
+        if key in seen:
+            continue
+        seen.add(key)
+        alerts.append(Alert(
+            rule_name="System Binary Name Masquerading",
+            severity="high",
+            mitre_tactic="Defense Evasion",
+            mitre_technique="T1036.005",
+            description=f"{child} masqueraded from {image or 'an unknown path'} on {host}",
+            explanation=(
+                f"{child} is a well-known Windows system binary, but it was observed "
+                f"running from a non-standard directory. Attackers copy system binaries "
+                f"to user-controlled paths and rename their payload to match, hoping the "
+                f"process list and forensic tooling will treat the process as trusted."
+                if not standard_path else
+                f"{child} normally starts from a specific trusted parent, but was "
+                f"observed with parent {parent or 'unknown'}. Unusual parent lineage for "
+                f"a system binary is consistent with masquerading or a hollowed/injected "
+                f"system-named process."
+            ),
+            confidence=confidence,
+            confidence_factors=[
+                "system binary name on a non-standard path" if not standard_path else "system binary spawned by an unexpected parent",
+                "process-name masquerading indicator",
+            ],
+            investigate_next=(
+                "Verify the file's signature and publisher, compare its hash to the "
+                "trusted Windows binary, and trace the parent chain and the account that "
+                "launched it. If the file is not a signed Windows binary, treat it as "
+                "attacker controlled."
+            ),
+            event=ev,
+            process=image,
+            parent_process=ev.parent_process,
+            evidence={
+                "image": image,
+                "parent_process": ev.parent_process,
+                "standard_path": standard_path,
+                "masqueraded_name": child,
+                "evidence_strength": "high" if not standard_path else "medium",
+            },
+        ))
+    return alerts
+
+
 def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts = []
     alerts.extend(_windows_defender_malware_detection(events))
@@ -206,6 +327,7 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts.extend(_cmstp_uac_bypass(events))
     alerts.extend(_volatile_systemroot_uac_bypass(events))
     alerts.extend(_uac_bypass_dll_sideload(events))
+    alerts.extend(_dll_side_loading(events))
     alerts.extend(_wscript_manifest_uac_bypass(events))
     alerts.extend(_office_vba_object_model_access(events))
     alerts.extend(_ftp_script_command_execution(events))
@@ -217,6 +339,8 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts.extend(_temp_dotnet_compilation(events))
     alerts.extend(_unmanaged_powershell_injection(events))
     alerts.extend(_rundll32_wermgr_hollowing(events))
+    alerts.extend(_detect_masquerading(events))
+    alerts.extend(_segmented_payload_staging(events))
     for ev in events:
         alerts.extend(_check(ev))
     return alerts
@@ -1631,6 +1755,131 @@ def _uac_bypass_dll_sideload(events: List[NormalizedEvent]) -> List[Alert]:
     return alerts
 
 
+def _dll_side_loading(events: List[NormalizedEvent]) -> List[Alert]:
+    """Detect correlated Sysmon image-load evidence for DLL side-loading (T1574.002).
+
+    Event ID 7 alone is intentionally low-signal: unsigned third-party modules
+    are common.  Promote only when the event carries an explicit hijack rule,
+    the owning process was invoked with the loaded module, or an unsigned
+    module came from an unusual location with a suspicious proxy launcher.
+    Repeated Event ID 7 records for the same process are grouped into one
+    finding so a noisy Sysmon configuration cannot flood the case.
+    """
+    timed_events = sorted((item for item in events if item.timestamp), key=lambda item: item.timestamp)
+    process_by_guid: Dict[str, List[NormalizedEvent]] = {}
+    for item in timed_events:
+        if item.event_id not in (1, 4688) or not _is_sysmon_event(item):
+            continue
+        guid = (item.event_data.get("ProcessGuid", "") or "").strip().lower()
+        if guid:
+            process_by_guid.setdefault(guid, []).append(item)
+
+    grouped: Dict[tuple[str, str, str], Dict[str, object]] = {}
+    for load_event in timed_events:
+        if load_event.event_id != 7 or not _is_sysmon_event(load_event):
+            continue
+        loaded_module = (load_event.event_data.get("ImageLoaded", "") or "").strip()
+        if not loaded_module or not loaded_module.lower().endswith(".dll"):
+            continue
+        image = (load_event.process_name or load_event.event_data.get("Image", "") or "").strip()
+        rule_name = (load_event.event_data.get("RuleName", "") or "").strip()
+        rule_l = rule_name.lower()
+        explicit_rule = bool(DLL_HIJACK_RULE_RE.search(rule_name))
+        signed = (load_event.event_data.get("Signed", "") or "").strip().lower()
+        signature_status = (load_event.event_data.get("SignatureStatus", "") or "").strip().lower()
+        unsigned = signed in {"false", "0", "no"} or signature_status in {"unavailable", "invalid", "error", "unknown"}
+        loaded_l = loaded_module.lower()
+        nonstandard_module = not any(marker in loaded_l for marker in TRUSTED_DLL_PATH_MARKERS)
+        guid = (load_event.event_data.get("ProcessGuid", "") or "").strip().lower()
+        process_events = list(process_by_guid.get(guid, []))
+        process_name = _basename(image)
+        linked_commands = [item.command_line for item in process_events if item.command_line]
+        command_references = any(_basename(loaded_module) in command.lower() for command in linked_commands)
+        proxy_launcher = process_name in DLL_PROXY_LAUNCHERS or any(
+            _basename(item.process_name) in DLL_PROXY_LAUNCHERS for item in process_events
+        )
+        parent = load_event.parent_process or (process_events[0].parent_process if process_events else "")
+        suspicious_parent = _basename(parent) in UAC_SUSPICIOUS_LAUNCHERS
+
+        strong_context = explicit_rule or command_references or proxy_launcher
+        if not ((unsigned and strong_context) or (explicit_rule and unsigned) or (unsigned and nonstandard_module and suspicious_parent)):
+            continue
+
+        host = load_event.computer or "unknown"
+        group_key = (host, loaded_l, rule_l or process_name)
+        bucket = grouped.setdefault(
+            group_key,
+            {
+                "load_events": [],
+                "process_events": [],
+                "image": image,
+                "loaded_module": loaded_module,
+                "rule_name": rule_name,
+                "signed": signed,
+                "signature_status": signature_status,
+            },
+        )
+        bucket["load_events"].append(load_event)
+        for item in process_events:
+            if item not in bucket["process_events"]:
+                bucket["process_events"].append(item)
+
+    alerts: List[Alert] = []
+    for (host, _loaded_key, _rule_key), bucket in grouped.items():
+        load_events = bucket["load_events"]
+        process_events = sorted(bucket["process_events"], key=lambda item: item.timestamp or datetime.min)
+        loaded_module = str(bucket["loaded_module"])
+        image = str(bucket["image"])
+        rule_name = str(bucket["rule_name"])
+        anchor = next(
+            (item for item in process_events if _basename(item.process_name) in DLL_PROXY_LAUNCHERS and item.command_line),
+            process_events[0] if process_events else load_events[0],
+        )
+        actor = _event_actor(anchor)
+        linked_commands = sorted({item.command_line[:400] for item in process_events if item.command_line})
+        process_guid = (load_events[0].event_data.get("ProcessGuid", "") or "").strip()
+        alerts.append(
+            Alert(
+                rule_name="DLL Side-Loading / Hijack",
+                severity="high",
+                mitre_tactic="Defense Evasion",
+                mitre_technique="T1574.002",
+                description=(
+                    f"{_basename(image) or 'A process'} loaded unsigned or hijack-marked DLL "
+                    f"{loaded_module} on {host}"
+                ),
+                explanation=(
+                    "Sysmon image-load telemetry shows a DLL that is unsigned, explicitly marked as a hijack, "
+                    "or referenced by the launching command. This pattern is consistent with DLL side-loading, "
+                    "where a trusted executable loads attacker-controlled code from its search path."
+                ),
+                confidence="high",
+                promotion_policy="standalone",
+                investigate_next=(
+                    f"Recover {loaded_module}, verify its signer and hash, inspect the loader's search path, "
+                    "and review the parent process and any follow-on network or persistence activity."
+                ),
+                event=anchor,
+                user=actor,
+                process=image,
+                parent_process=anchor.parent_process,
+                evidence={
+                    "target_process": image,
+                    "loaded_module": loaded_module,
+                    "module_signed": bucket["signed"],
+                    "signature_status": bucket["signature_status"],
+                    "sysmon_rule_name": rule_name,
+                    "process_guid": process_guid,
+                    "load_event_count": len(load_events),
+                    "linked_processes": sorted({item.process_name for item in process_events if item.process_name}),
+                    "linked_commands": linked_commands,
+                    "evidence_strength": "high",
+                },
+            )
+        )
+    return alerts
+
+
 def _wscript_manifest_uac_bypass(events: List[NormalizedEvent]) -> List[Alert]:
     alerts = []
     timed_events = sorted((item for item in events if item.timestamp), key=lambda item: item.timestamp)
@@ -2312,10 +2561,42 @@ def _suspicious_firewall_rule_creation(events: List[NormalizedEvent]) -> List[Al
 
 
 def _sip_trust_provider_registration(events: List[NormalizedEvent]) -> List[Alert]:
+    """Detect T1553 (Subvert Trust Controls), specifically T1553.003."""
+
     alerts: List[Alert] = []
     grouped: Dict[tuple[str, str], List[NormalizedEvent]] = {}
 
     for ev in sorted((item for item in events if item.timestamp), key=lambda item: item.timestamp):
+        # Sysmon registry events are often the only surviving telemetry for a
+        # SIP/trust-provider hijack.  The old rule required a regsvr32 command
+        # line, which made the public registry-only sample invisible.  Require
+        # both the Cryptography\OID registration path and a user-controlled DLL
+        # value before promoting this high-confidence finding.
+        if ev.event_id in (12, 13) and _is_sysmon_event(ev):
+            target_object = (ev.event_data.get("TargetObject", "") or "").strip()
+            details = (ev.event_data.get("Details", "") or "").strip()
+            rule_name = (ev.event_data.get("RuleName", "") or "").strip()
+            target_lower = target_object.lower()
+            dll_path = _extract_first_dll_path(details)
+            if not dll_path and details.lower().endswith(".dll"):
+                dll_path = details.strip('" ')
+            registration_path = "\\cryptography\\oid\\" in target_lower and "\\dll" in target_lower
+            identified_rule = any(marker in rule_name.lower() for marker in ("t1553.003", "sip and trust provider", "trust provider hijacking"))
+            if not (registration_path or identified_rule):
+                continue
+            if not dll_path or not any(marker in dll_path.lower() for marker in ("\\users\\", "\\programdata\\", "\\temp\\")):
+                continue
+
+            key = (ev.computer or "unknown", dll_path.lower())
+            existing = grouped.get(key)
+            if existing and ev.timestamp - existing[-1].timestamp <= timedelta(minutes=15):
+                existing.append(ev)
+            elif existing:
+                grouped[(key[0], f"{key[1]}::{ev.timestamp.isoformat()}")] = [ev]
+            else:
+                grouped[key] = [ev]
+            continue
+
         if ev.event_id not in (4688, 1):
             continue
 
@@ -2347,6 +2628,11 @@ def _sip_trust_provider_registration(events: List[NormalizedEvent]) -> List[Aler
         first_event = cluster[0]
         actor = first_event.domain_user or first_event.subject_domain_user or first_event.event_data.get("User", "") or "unknown"
         dll_path = dll_key.split("::", 1)[0]
+        for item in cluster:
+            candidate = _extract_first_dll_path(item.command_line or item.event_data.get("Details", "") or "")
+            if candidate:
+                dll_path = candidate
+                break
         alerts.append(
             Alert(
                 rule_name="SIP Trust Provider Registration",
@@ -2369,6 +2655,17 @@ def _sip_trust_provider_registration(events: List[NormalizedEvent]) -> List[Aler
                     "actor_user": actor,
                     "dll_path": dll_path,
                     "command_lines": [item.command_line[:300] for item in cluster if item.command_line][:5],
+                    "event_ids": sorted({item.event_id for item in cluster}),
+                    "registry_targets": sorted({
+                        (item.event_data.get("TargetObject", "") or "").strip()
+                        for item in cluster
+                        if (item.event_data.get("TargetObject", "") or "").strip()
+                    })[:20],
+                    "rule_names": sorted({
+                        (item.event_data.get("RuleName", "") or "").strip()
+                        for item in cluster
+                        if (item.event_data.get("RuleName", "") or "").strip()
+                    }),
                     "evidence_strength": "high",
                 },
             )
@@ -2698,11 +2995,6 @@ def _check(ev: NormalizedEvent) -> List[Alert]:
             (r"powershell.*downloadstring", "PowerShell Download Cradle", "critical", "high"),
             (r"(namedpipe(client|server)stream|system\.io\.pipes|\\\\\.\\pipe\\|\\\\localhost\\pipe\\)", "Named Pipe PowerShell", "critical", "high"),
             (r"powershell.*reflection\.assembly", "Reflective Loading", "critical", "high"),
-            (r"vssadmin\s+delete\s+shadows", "Shadow Copy Deletion", "critical", "high"),
-            (r"wmic\s+shadow" + r"copy\s+delete", "Shadow Copy Deletion", "critical", "high"),
-            (r"(get-wmiobject|get-ciminstance)\s+win32_" + r"shadowcopy.*delete\(", "Shadow Copy Deletion", "critical", "high"),
-            (r"wbadmin\s+delete", "Backup Deletion", "critical", "high"),
-            (r"bcdedit.*recoveryenabled.*no", "Recovery Disabled", "critical", "high"),
             (r"mshta.*(vbscript|javascript)", "MSHTA Execution", "critical", "high"),
             (r"procdump.*lsass", "LSASS Dump (Procdump)", "critical", "high"),
             (r"comsvcs.*minidump", "LSASS Dump (comsvcs)", "critical", "high"),
@@ -2728,4 +3020,73 @@ def _check(ev: NormalizedEvent) -> List[Alert]:
                 ))
                 break
 
+    return alerts
+
+
+def _segmented_payload_staging(events: List[NormalizedEvent]) -> List[Alert]:
+    """Detect covert segmented payload reconstruction via Get-Service segN staging (T1027).
+
+    The Tchopper-style technique stores payload chunks as service DisplayName values,
+    then reconstructs the file by running a repeated pipeline per chunk, e.g.:
+
+        cmd /c powershell -command "Get-Service "seg1" | select -Expand DisplayName |out-file -append tmp_payload.txt"
+        ...seg2, seg3 ... segN
+
+    These look like harmless service queries but collectively reassemble a payload.
+    """
+    alerts: List[Alert] = []
+    seg_re = re.compile(
+        r"""Get-Service\s+["']?seg(\d+)["']?\s*\|\s*select\s+-?Expand(?:Property)?\s+DisplayName\s*\|\s*out-file\s+-append\s+("?[^\s"']+"?)""",
+        re.IGNORECASE,
+    )
+    # group by (host, output file)
+    grouped: Dict[Tuple[str, str], List[Tuple[int, NormalizedEvent]]] = {}
+    for ev in events:
+        if ev.event_id not in (4688, 1, 4104):
+            continue
+        command = (ev.command_line or ev.command_line_value or "") + " " + (ev.event_data.get("ScriptBlockText", "") or "")
+        match = seg_re.search(command or "")
+        if not match:
+            continue
+        try:
+            seg_num = int(match.group(1))
+        except (TypeError, ValueError):
+            continue
+        out_file = match.group(2).strip().strip('"')
+        key = (ev.computer or "unknown", out_file.lower())
+        grouped.setdefault(key, []).append((seg_num, ev))
+    for (host, out_file), hits in grouped.items():
+        distinct = sorted(set(num for num, _ in hits))
+        if len(distinct) < 3:
+            continue
+        first_ev = hits[0][1]
+        actor = _event_actor(first_ev)
+        alerts.append(
+            Alert(
+                rule_name="Segmented Payload Reassembly",
+                severity="high",
+                mitre_tactic="Defense Evasion",
+                mitre_technique="T1027",
+                description=f"{actor} reassembled {len(distinct)} obfuscated segments (seg1..seg{max(distinct)}) into {out_file} on {host}",
+                explanation=(
+                    "Repeated Get-Service segN queries whose DisplayName values are appended to the same file are a known "
+                    "covert staging technique for reassembling an obfuscated payload (e.g. Tchopper) while evading "
+                    "single-command detection."
+                ),
+                confidence="high",
+                investigate_next=(
+                    "Inspect the reconstructed file, identify which services carried the chunks, and check for follow-on execution of the payload."
+                ),
+                event=first_ev,
+                user=actor,
+                process=first_ev.process_name,
+                evidence={
+                    "segment_count": len(distinct),
+                    "segment_range": f"seg{distinct[0]}..seg{distinct[-1]}",
+                    "output_file": out_file,
+                    "event_ids": sorted({ev.event_id for _, ev in hits})[:20],
+                    "evidence_strength": "high",
+                },
+            )
+        )
     return alerts

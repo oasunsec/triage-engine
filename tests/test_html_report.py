@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from reporting.html_report import generate_from_artifacts
+from reporting.html_report import generate_from_artifacts, generate_from_data
 
 
 class HtmlReportPhase42Tests(unittest.TestCase):
@@ -32,6 +32,11 @@ class HtmlReportPhase42Tests(unittest.TestCase):
                         "collection_quality_summary": {
                             "summary": "Security + Sysmon present, PowerShell missing",
                             "telemetry_missing": ["PowerShell"],
+                            "unavailable_sources": ["System"],
+                            "permission_denied_sources": ["Security"],
+                            "warning_count": 1,
+                            "fallback_permission_sources": ["Security"],
+                            "fallback_used": True,
                         },
                         "telemetry_summary": {"present": ["Security", "Sysmon"], "missing": ["PowerShell"]},
                     },
@@ -104,6 +109,16 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertIn("@page { size: auto; margin: 12mm; }", html)
             self.assertIn("renderExecutiveSummary", html)
             self.assertIn("renderMitreMatrix", html)
+            self.assertIn('id="executive-disposition"', html)
+            self.assertIn("confidencePercent", html)
+            self.assertIn("text-background-opacity", html)
+            self.assertIn("detailList('Unreadable channels'", html)
+            self.assertIn("detailList('Collection permission issues'", html)
+            self.assertIn("Partial reads", html)
+            self.assertIn("collectionSummary.unavailable_sources", html)
+            self.assertIn("collectionSummary.fallback_used", html)
+            self.assertIn("collectionSummary.fallback_permission_sources", html)
+            self.assertIn("Fallback after denied access", html)
 
     def test_phase_42_template_has_priority_and_mitre_hooks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -191,6 +206,59 @@ class HtmlReportPhase42Tests(unittest.TestCase):
             self.assertNotIn("</script> and line separators", html)
             self.assertIn("\\u2028", html)
             self.assertIn("\\u2029", html)
+
+
+    def test_generate_from_data_does_not_reopen_persisted_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.html"
+            findings = {
+                "case": {"case_name": "av-blocked", "input_source": "evtx"},
+                "summary": {"signal_count": 1, "finding_count": 1, "incident_count": 0},
+                "signals": [{"id": "s-1", "source_rule": "Potential malware /script"}],
+                "findings": [],
+                "incidents": [],
+                "raw_events": [],
+            }
+            timeline = {"timeline": [], "summary": {"total_rows": 0}}
+            graph = {"nodes": [], "edges": []}
+
+            generate_from_data(findings, timeline, graph, str(report))
+
+            self.assertTrue(report.is_file())
+            self.assertIn("av-blocked", report.read_text(encoding="utf-8"))
+
+    def test_report_is_self_contained_for_offline_use(self):
+        import re
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "report.html"
+            generate_from_data({"case": {"case_name": "offline"}, "summary": {}, "signals": [], "findings": [],
+                                "incidents": [], "raw_events": []},
+                               {"timeline": [], "summary": {}}, {"nodes": [], "edges": []}, str(report))
+            html = report.read_text(encoding="utf-8")
+        self.assertIn("cytoscape 3.34.3, MIT", html)
+        self.assertNotIn("unpkg.com", html)
+        self.assertEqual(re.findall(r'<(?:script|link)[^>]+(?:src|href)="https?://', html), [])
+
+    def test_served_report_policy_blocks_all_network_access(self):
+        import server
+        for directive in ("default-src 'none'", "connect-src 'none'", "sandbox allow-scripts"):
+            self.assertIn(directive, server.REPORT_CSP)
+
+    def test_report_embeds_bounded_artifact_rows_but_every_alert_row(self):
+        # A real workstation bundle produced 25,879 artifact rows, a 71 MB embedded timeline.
+        from reporting.html_report import _bounded_timeline
+        rows = [{"type": "finding", "id": "f-1", "timestamp": "2026-01-01T00:00:00+00:00"}]
+        rows += [{"type": "artifact", "id": f"a-{index}", "timestamp": f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00",
+                  "related_ids": {"relationship_ids": ["rel_x"] if index == 0 else []}} for index in range(30)]
+        bounded = _bounded_timeline({"timeline": rows, "summary": {"total_rows": 31}}, limit=5)
+        kept = [row["id"] for row in bounded["timeline"]]
+        self.assertIn("f-1", kept)
+        self.assertIn("a-0", kept)  # linked rows first, even when oldest
+        self.assertEqual(kept[1:], ["a-0", "a-26", "a-27", "a-28", "a-29"])
+        self.assertEqual(bounded["summary"]["omitted_artifact_rows"], 25)
+        self.assertEqual(bounded["summary"]["total_rows"], 31)
+        small = {"timeline": rows[:3], "summary": {}}
+        self.assertIs(_bounded_timeline(small, limit=5), small)
 
 
 if __name__ == "__main__":

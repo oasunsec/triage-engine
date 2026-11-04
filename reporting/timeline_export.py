@@ -7,8 +7,8 @@ from collections import defaultdict
 from typing import Dict, List
 
 from models.event_model import Finding, Incident, Signal
-from triage_engine.export_sanitizer import sanitize_export_data
-from triage_engine.user_utils import normalize_user_identity
+from corrobora.export_sanitizer import sanitize_export_data
+from corrobora.user_utils import normalize_user_identity
 
 
 def _iso(ts):
@@ -36,6 +36,7 @@ def _timeline_row_from_signal(signal: Signal) -> Dict:
     account_name = _user_fields(signal.account_name, signal.host)
     return {
         "type": "signal",
+        "time_semantics": signal.evidence.get("time_semantics", "event_timestamp"),
         "id": signal.id,
         "display_label": signal.display_label,
         "timestamp": _iso(signal.timestamp),
@@ -98,6 +99,7 @@ def _timeline_row_from_finding(finding: Finding) -> Dict:
     account_name = _user_fields(finding.account_name, finding.host)
     return {
         "type": "finding",
+        "time_semantics": finding.evidence.get("time_semantics", "event_timestamp"),
         "id": finding.id,
         "display_label": finding.display_label,
         "timestamp": _iso(finding.first_seen),
@@ -220,7 +222,28 @@ def _timeline_row_from_incident(incident: Incident) -> Dict:
     }
 
 
-def export(signals: List[Signal], findings: List[Finding], incidents: List[Incident], filepath: str) -> Dict:
+def _timeline_row_from_artifact(observation: dict) -> Dict:
+    details = observation.get("details", {})
+    title = {"browser_download": "Browser recorded download", "prefetch_run": "Prefetch recorded run",
+             "prefetch_record": "Prefetch metadata; no run time",
+             "registry_run": "Run key last written (value present)", "service": "Service key last written",
+             "amcache_file": "Amcache file entry last written"}.get(observation["kind"], observation["kind"])
+    return {
+        "type": "artifact", "id": observation["id"], "display_label": title,
+        "timestamp": observation.get("timestamp"), "time_semantics": observation["time_semantics"],
+        "title": title, "severity": "", "confidence": "", "host": observation["host"],
+        "host_display": _display(observation["host"]), "user": "", "user_display": "unconfirmed",
+        "process": details.get("name", "") if observation["kind"].startswith("prefetch") else "",
+        "process_display": details.get("name", "") if observation["kind"].startswith("prefetch") else "",
+        "remote_url": (details.get("url_chain") or [""])[-1] if observation["kind"] == "browser_download" else "",
+        "summary": observation["interpretation"], "context": observation,
+        "related_ids": {"signal_ids": [], "finding_ids": [], "incident_ids": [],
+                        "relationship_ids": list(observation.get("relationship_ids", []))},
+    }
+
+
+def export(signals: List[Signal], findings: List[Finding], incidents: List[Incident], filepath: str,
+           *, forensic_observations: list[dict] | None = None) -> Dict:
     signal_to_findings = defaultdict(list)
     signal_to_incidents = defaultdict(list)
     finding_to_incidents = defaultdict(list)
@@ -264,6 +287,11 @@ def export(signals: List[Signal], findings: List[Finding], incidents: List[Incid
         rows.append(row)
 
     rows.extend(_timeline_row_from_incident(i) for i in incidents)
+    # Configuration snapshots have their own view and existing finding rows.
+    # Only activity/metadata observations enter the activity timeline.
+    artifact_rows = [_timeline_row_from_artifact(observation) for observation in forensic_observations or []
+                     if observation["time_semantics"] != "collection_snapshot"]
+    rows.extend(artifact_rows)
     rows.sort(key=lambda r: (r.get("timestamp") is None, r.get("timestamp") or "", r.get("id", "")))
 
     data = {
@@ -272,6 +300,7 @@ def export(signals: List[Signal], findings: List[Finding], incidents: List[Incid
             "signals": len(signals),
             "findings": len(findings),
             "incidents": len(incidents),
+            "artifact_observations": len(artifact_rows),
             "total_rows": len(rows),
             "suppressed_signal_rows": len(hidden_signal_ids),
         },

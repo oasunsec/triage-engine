@@ -1,4 +1,4 @@
-"""Triage Engine — REST API and Web Dashboard.
+"""Corrobora — REST API and Web Dashboard.
 
 Start with:
     python server.py
@@ -6,32 +6,41 @@ Start with:
 Then open http://localhost:8000 in your browser.
 
 Architecture: this file is a thin HTTP adapter.  All investigation logic
-lives in ``triage_engine.service``.  Jobs are persisted in SQLite via
-``triage_engine.job_store``.
+lives in ``corrobora.service``.  Jobs are persisted in SQLite via
+``corrobora.job_store``.
 """
 
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+import asyncio
+import collections
 import csv
 import hashlib
 import hmac
 import io
 import json
 import logging
+import multiprocessing
 import os
 import re
 import secrets
 import shutil
+import stat
+import socket
 import sqlite3
+import subprocess
 import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from sqlite3 import IntegrityError
-from threading import Lock, Thread
+from threading import BoundedSemaphore, Lock, Thread
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -40,19 +49,27 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from corrobora.env_loader import load_project_env
+load_project_env(ROOT_DIR, explicit=os.environ.get("CORROBORA_ENV_FILE"))
+
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 import uvicorn
 
-from triage_engine import __version__
-from triage_engine.case_utils import resolve_case_path
-from triage_engine.export_sanitizer import apply_demo_redaction_data, apply_demo_redaction_text
-from triage_engine.logging_config import configure_logging
-from triage_engine.service import InvestigationRequest, ProgressReporter, run_investigation
-from triage_engine.webhooks import dispatch_webhook_event
-from triage_engine.job_store import (
+from corrobora import __version__
+from corrobora.case_utils import resolve_case_path
+from corrobora.export_sanitizer import apply_demo_redaction_data, apply_demo_redaction_text
+from corrobora.forensic_api import _JSON_CACHE as _FORENSIC_JSON_CACHE, build_forensics_router
+from corrobora.ingest import IngestError, extract_collection
+from corrobora.auth_store import create_ingest_token, list_ingest_tokens, revoke_ingest_token, verify_ingest_token
+from corrobora.logging_config import configure_logging
+from parser.live_reader import classify_live_channel_error
+from corrobora.service import InvestigationRequest, ProgressReporter, run_investigation
+from corrobora.job_store import (
     create_job,
     update_job,
     get_job,
@@ -60,8 +77,16 @@ from triage_engine.job_store import (
     delete_job,
     get_jobs_with_uploads,
     clear_upload_path,
+    reconcile_interrupted_jobs,
 )
-from triage_engine.review_store import (
+from corrobora.product import (
+    ACQUISITION_METHODS,
+    CaseMetadata,
+    CaseMetadataStore,
+    CollectionManifest,
+    export_case_bundle,
+)
+from corrobora.review_store import (
     get_finding_review,
     upsert_finding_review,
     get_incident_review,
@@ -77,11 +102,13 @@ from triage_engine.review_store import (
     sync_queue_index_from_case_payload,
     get_all_finding_reviews,
     get_all_incident_reviews,
+    get_evidence_link_reviews,
+    list_analyst_evidence_links,
     delete_case_review_state,
     VALID_STATUSES,
     VALID_DISPOSITIONS,
 )
-from triage_engine.auth_store import (
+from corrobora.auth_store import (
     VALID_ROLES,
     authenticate_user,
     bootstrap_admin,
@@ -112,12 +139,18 @@ DEFAULT_SERVER_PORT = 8000
 DEFAULT_DATA_DIR = "data"
 DEFAULT_CASES_DIR = "cases"
 DEFAULT_CORS_ORIGINS = "localhost"
+DEFAULT_TRUSTED_HOSTS = "localhost,127.0.0.1,[::1],testserver"
 DEFAULT_MAX_UPLOAD_MB = 500
+DEFAULT_MAX_CONCURRENT_JOBS = 2
+DEFAULT_MAX_QUEUED_JOBS = 8
 DEFAULT_RUNTIME_MODE = "local"
 
 
 def _resolve_runtime_dir(env_name: str, default_relative: str) -> str:
     configured = str(os.environ.get(env_name, "") or "").strip()
+    if not configured and getattr(sys, "frozen", False):
+        local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+        return os.path.abspath(os.path.join(local_app_data, "Corrobora", default_relative))
     value = configured or default_relative
     expanded = os.path.expanduser(value)
     if os.path.isabs(expanded):
@@ -179,44 +212,116 @@ def _cors_origins_from_env(raw_value: str, *, default_port: int) -> List[str]:
     return [f"http://localhost:{default_port}", f"http://127.0.0.1:{default_port}"]
 
 
-SERVER_HOST = str(os.environ.get("TRIAGE_HOST", DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST).strip() or DEFAULT_SERVER_HOST
-SERVER_PORT = _env_int("TRIAGE_PORT", default=DEFAULT_SERVER_PORT, minimum=1, maximum=65535)
-DATA_ROOT = _resolve_runtime_dir("TRIAGE_DATA_DIR", DEFAULT_DATA_DIR)
-CASES_ROOT = _resolve_runtime_dir("TRIAGE_CASES_DIR", DEFAULT_CASES_DIR)
-UPLOAD_ROOT = os.path.join(ROOT_DIR, "uploads")
+SERVER_HOST = str(os.environ.get("CORROBORA_HOST", DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST).strip() or DEFAULT_SERVER_HOST
+SERVER_PORT = _env_int("CORROBORA_PORT", default=DEFAULT_SERVER_PORT, minimum=1, maximum=65535)
+DATA_ROOT = _resolve_runtime_dir("CORROBORA_DATA_DIR", DEFAULT_DATA_DIR)
+CASES_ROOT = _resolve_runtime_dir("CORROBORA_CASES_DIR", DEFAULT_CASES_DIR)
+UPLOAD_ROOT = _resolve_runtime_dir("CORROBORA_UPLOAD_DIR", (
+    os.path.join(DATA_ROOT, "uploads")
+    if getattr(sys, "frozen", False)
+    else os.path.join(ROOT_DIR, "uploads")
+))
 STATIC_DIR = os.path.join(ROOT_DIR, "static")
 BACKUPS_ROOT = os.path.join(DATA_ROOT, "backups")
-WEBHOOK_CONFIG_PATH = os.path.join(ROOT_DIR, "config", "webhooks.json")
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(CASES_ROOT, exist_ok=True)
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 
-# Max upload size per file: configurable via TRIAGE_MAX_UPLOAD_MB (default 500 MB)
-MAX_UPLOAD_MB = _env_int("TRIAGE_MAX_UPLOAD_MB", default=DEFAULT_MAX_UPLOAD_MB, minimum=1)
+# Max upload size per file: configurable via CORROBORA_MAX_UPLOAD_MB (default 500 MB)
+MAX_UPLOAD_MB = _env_int("CORROBORA_MAX_UPLOAD_MB", default=DEFAULT_MAX_UPLOAD_MB, minimum=1)
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
-SESSION_COOKIE = "triage_session"
-QUEUE_SYNC_INTERVAL_SECONDS = int(os.environ.get("TRIAGE_QUEUE_SYNC_INTERVAL_SECONDS", "30"))
+# Collector archives carry $MFT copies of several GiB; CORROBORA_MAX_INGEST_MB caps one upload.
+MAX_INGEST_BYTES = _env_int("CORROBORA_MAX_INGEST_MB", default=12288, minimum=1) * 1024 * 1024
+# The aggregate limit protects disk and request handling when many individually
+# valid files are submitted in a single investigation request.
+MAX_AGGREGATE_UPLOAD_MB = _env_int(
+    "CORROBORA_MAX_AGGREGATE_UPLOAD_MB", default=MAX_UPLOAD_MB, minimum=1
+)
+MAX_AGGREGATE_UPLOAD_BYTES = MAX_AGGREGATE_UPLOAD_MB * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+MAX_CONCURRENT_JOBS = _env_int(
+    "CORROBORA_MAX_CONCURRENT_JOBS", default=DEFAULT_MAX_CONCURRENT_JOBS, minimum=1, maximum=32
+)
+MAX_QUEUED_JOBS = _env_int(
+    "CORROBORA_MAX_QUEUED_JOBS", default=DEFAULT_MAX_QUEUED_JOBS, minimum=0, maximum=256
+)
+SESSION_COOKIE = "corrobora_session"
+QUEUE_SYNC_INTERVAL_SECONDS = int(os.environ.get("CORROBORA_QUEUE_SYNC_INTERVAL_SECONDS", "30"))
 CSRF_HEADER = "X-CSRF-Token"
 CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/bootstrap"}
 STATE_CHANGING_METHODS = {"POST", "PATCH", "DELETE"}
 RATE_LIMIT_WINDOW_SECONDS = 60
-_CSRF_SECRET = os.environ.get("TRIAGE_CSRF_SECRET", "").strip() or secrets.token_urlsafe(32)
+API_READ_LIMIT_PER_MINUTE = _env_int("CORROBORA_API_READ_LIMIT_PER_MINUTE", default=600, minimum=60)
+_CSRF_SECRET = os.environ.get("CORROBORA_CSRF_SECRET", "").strip() or secrets.token_urlsafe(32)
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s\"']+")
 _RATE_LIMIT_BUCKETS: Dict[str, deque[float]] = {}
 _RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_MAX_KEYS = 10_000
 _CURRENT_USER_UNSET = object()
 _SERVER_STARTED_AT = time.monotonic()
 STARTUP_DISK_HARD_MIN_BYTES = 100 * 1024 * 1024
 STARTUP_DISK_WARN_BYTES = 1024 * 1024 * 1024
 CORS_ORIGINS = _cors_origins_from_env(
-    os.environ.get("TRIAGE_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
+    os.environ.get("CORROBORA_CORS_ORIGINS", DEFAULT_CORS_ORIGINS),
     default_port=SERVER_PORT,
 )
-RUNTIME_MODE = _runtime_mode_from_env(os.environ.get("TRIAGE_RUNTIME_MODE", DEFAULT_RUNTIME_MODE))
+TRUSTED_HOSTS = [
+    value.strip()
+    for value in str(os.environ.get("CORROBORA_TRUSTED_HOSTS", DEFAULT_TRUSTED_HOSTS) or "").split(",")
+    if value.strip()
+] or ["localhost", "127.0.0.1", "[::1]"]
+# X-Forwarded-For is only honored from these reverse-proxy peers; otherwise any
+# client could spoof its address to evade per-IP login throttling.
+TRUSTED_PROXIES = {
+    value.strip().lower().strip("[]")
+    for value in str(os.environ.get("CORROBORA_TRUSTED_PROXIES", "") or "").split(",")
+    if value.strip()
+}
+REPORT_CSP = (
+    "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
+    # Reports are self-contained (the graph library is inlined), so they need no network at all:
+    # evidence text rendered in a report cannot fetch or beacon anywhere.
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; "
+    "connect-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+)
+BOOTSTRAP_TOKEN = str(os.environ.get("CORROBORA_BOOTSTRAP_TOKEN", "") or "").strip()
+RUNTIME_MODE = _runtime_mode_from_env(os.environ.get("CORROBORA_RUNTIME_MODE", DEFAULT_RUNTIME_MODE))
 RUNTIME_LABEL = "Docker" if RUNTIME_MODE == "docker" else "Local Python"
 
-# Allowed path roots for local-path investigations (security: confine access)
-ALLOWED_PATH_ROOTS: List[str] = []  # empty = allow any local path (localhost-only is safe)
+def _allowed_path_roots_from_env(raw_value: str) -> List[str]:
+    """Resolve configured local-investigation roots without following prefixes."""
+    roots: List[str] = []
+    for value in str(raw_value or "").split(os.pathsep):
+        candidate = value.strip()
+        if not candidate:
+            continue
+        roots.append(os.path.realpath(os.path.abspath(os.path.expanduser(candidate))))
+    return list(dict.fromkeys(roots))
+
+
+# Empty remains backwards compatible for localhost deployments. Set
+# CORROBORA_ALLOWED_PATH_ROOTS (semicolon-separated on Windows) to confine path
+# investigations to explicit evidence directories.
+ALLOWED_PATH_ROOTS = _allowed_path_roots_from_env(os.environ.get("CORROBORA_ALLOWED_PATH_ROOTS", ""))
+
+# Jobs are admitted before execution so a burst cannot create unbounded native
+# worker threads. Keep the imported Thread fallback for existing unit tests
+# that replace ``server.Thread`` to inspect the submitted request.
+_NATIVE_THREAD = Thread
+_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="triage-job")
+_JOB_ADMISSION = BoundedSemaphore(MAX_CONCURRENT_JOBS + MAX_QUEUED_JOBS)
+
+# Quick Check deliberately has a much narrower unauthenticated surface than
+# the analyst API. A browser must first obtain a short-lived, process-local
+# nonce over loopback, then present it on every state-changing quick endpoint.
+# This permits a fresh portable install to run a check without creating an
+# analyst account while keeping all generic cases, jobs, and review routes
+# behind normal authentication.
+QUICK_CHECK_HEADER = "X-Corrobora-Quick-Token"
+QUICK_CHECK_SESSION_TTL_SECONDS = 30 * 60
+_QUICK_CHECK_LOCK = Lock()
+_QUICK_CHECK_SESSIONS: Dict[str, float] = {}
+_QUICK_CHECK_JOBS: Dict[str, Dict[str, str]] = {}
 
 OPENAPI_TAGS = [
     {"name": "Auth", "description": "Authentication, users, sessions, and audit operations."},
@@ -257,12 +362,15 @@ REVIEW_QUEUE_EXPORT_FIELDNAMES = [
 ]
 
 def _client_ip(request: Request) -> str:
-    forwarded = (request.headers.get("x-forwarded-for", "") or "").split(",")[0].strip()
-    if forwarded:
-        return forwarded
-    if request.client and request.client.host:
-        return str(request.client.host)
-    return "unknown"
+    peer = str(request.client.host) if request.client and request.client.host else ""
+    if peer and peer.lower() in TRUSTED_PROXIES:
+        # Walk right-to-left past our own proxies; the first untrusted hop is
+        # the real client. Left-most entries are client-controlled.
+        hops = [hop.strip() for hop in (request.headers.get("x-forwarded-for", "") or "").split(",") if hop.strip()]
+        for hop in reversed(hops):
+            if hop.lower().strip("[]") not in TRUSTED_PROXIES:
+                return hop[:64]
+    return peer or "unknown"
 
 
 def _csrf_token_for_session(session_id: str) -> str:
@@ -279,8 +387,8 @@ def _sanitize_error_message(detail: Any) -> str:
 
 
 configure_logging(DATA_ROOT)
-ACCESS_LOGGER = logging.getLogger("triage.access")
-SERVER_LOGGER = logging.getLogger("triage.server")
+ACCESS_LOGGER = logging.getLogger("corrobora.access")
+SERVER_LOGGER = logging.getLogger("corrobora.server")
 
 
 def _request_id_from_header(raw_header: str) -> str:
@@ -298,6 +406,13 @@ def _attach_request_id_header(request: Request, response: Response) -> Response:
     request_id = _request_id_for_log(request)
     if request_id:
         response.headers["X-Request-ID"] = request_id
+    # Evidence and authenticated responses must not survive in shared caches.
+    response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
     return response
 
 
@@ -318,8 +433,12 @@ def _log_access(request: Request, user: Optional[Dict[str, Any]], status_code: i
 
 def _consume_rate_limit(key: str, *, limit: int, now: float) -> tuple[bool, int]:
     with _RATE_LIMIT_LOCK:
-        bucket = _RATE_LIMIT_BUCKETS.setdefault(key, deque())
         cutoff = now - RATE_LIMIT_WINDOW_SECONDS
+        if len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_KEYS:
+            # Drop idle identities so distinct usernames/IPs cannot grow memory without bound.
+            for stale in [k for k, b in _RATE_LIMIT_BUCKETS.items() if not b or b[-1] <= cutoff]:
+                del _RATE_LIMIT_BUCKETS[stale]
+        bucket = _RATE_LIMIT_BUCKETS.setdefault(key, deque())
         while bucket and bucket[0] <= cutoff:
             bucket.popleft()
         if len(bucket) >= limit:
@@ -357,9 +476,24 @@ async def _rate_limit_result(
     elif method == "POST" and path.startswith("/api/investigate"):
         identity = (user or {}).get("username") or ip
         checks.append((f"investigate:{identity}", 10, "Rate limit exceeded for investigation starts"))
+    elif method == "POST" and path.startswith("/api/quick/"):
+        checks.append((f"quick-write:{ip}", 8, "Too many Quick Check requests"))
+    elif method == "GET" and path.startswith("/api/quick/jobs/"):
+        checks.append((f"quick-job-status:{ip}", 300, "Rate limit exceeded for Quick Check status polling"))
+    elif method == "GET" and path.startswith("/api/jobs/"):
+        # The dashboard polls job progress while a long EVTX run is active;
+        # use a bounded but higher bucket for status reads only.
+        identity = (user or {}).get("username") or ip
+        checks.append((f"job-status:{identity}", 300, "Rate limit exceeded for job status polling"))
+    elif method == "POST" and path == "/api/ingest/collection":
+        checks.append((f"ingest:{ip}", 30, "Too many collector uploads from this address"))
+    elif user and method == "GET":
+        # Opening one case issues several reads per tab; a reviewer moving quickly
+        # through cases must not be throttled into half-rendered screens.
+        checks.append((f"api-read:{user['username']}", API_READ_LIMIT_PER_MINUTE, "Rate limit exceeded"))
     else:
         identity = (user or {}).get("username") or ip
-        checks.append((f"api:{identity}", 60, "Rate limit exceeded"))
+        checks.append((f"api:{identity}", 120 if user else 60, "Rate limit exceeded"))
 
     for key, limit, message in checks:
         allowed, retry_after = _consume_rate_limit(key, limit=limit, now=now)
@@ -372,6 +506,9 @@ def _reset_security_state_for_tests() -> None:
     """Test hook for clearing in-memory security counters between test cases."""
     with _RATE_LIMIT_LOCK:
         _RATE_LIMIT_BUCKETS.clear()
+    with _QUICK_CHECK_LOCK:
+        _QUICK_CHECK_SESSIONS.clear()
+        _QUICK_CHECK_JOBS.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -410,73 +547,13 @@ class _JobReporter:
 # Background investigation worker
 # ---------------------------------------------------------------------------
 
-def _emit_completion_webhooks(
-    *,
-    job_id: str,
-    request: InvestigationRequest,
-    result: Any,
-    incident_ids: Optional[List[str]] = None,
-) -> None:
-    payload: Dict[str, Any] = {
-        "case_name": result.case_name,
-        "job_id": job_id,
-        "requested_by": request.requested_by or "",
-        "input_mode": request.input_mode,
-        "input_source": request.input_source,
-        "response_priority": str(getattr(result, "response_priority", "P4") or "P4"),
-        "signal_count": int(getattr(result, "signal_count", 0) or 0),
-        "finding_count": int(getattr(result, "finding_count", 0) or 0),
-        "incident_count": int(getattr(result, "incident_count", 0) or 0),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    if incident_ids:
-        payload["incident_ids"] = [incident_id for incident_id in incident_ids if incident_id]
+def _case_artifact_ref_from_name(case_name: Any) -> str:
+    """Return a stable case-relative report reference without exposing a local path."""
+    case_name = str(case_name or "").strip()
+    if not case_name:
+        return ""
+    return os.path.join(case_name, "report.html").replace(os.sep, "/")
 
-    completed_stats = dispatch_webhook_event(
-        "investigation_completed",
-        payload,
-        root_dir=ROOT_DIR,
-        config_path=WEBHOOK_CONFIG_PATH,
-        logger=SERVER_LOGGER,
-    )
-    SERVER_LOGGER.info(
-        "webhook_dispatch_result",
-        extra={
-            "request_id": request.request_id or "",
-            "user": request.requested_by or "",
-            "job_id": job_id,
-            "case_name": result.case_name,
-            "event": "investigation_completed",
-            "attempted": int(completed_stats.get("attempted", 0)),
-            "sent": int(completed_stats.get("sent", 0)),
-            "failed": int(completed_stats.get("failed", 0)),
-        },
-    )
-
-    response_priority = str(payload.get("response_priority", "P4")).upper()
-    incident_count = int(payload.get("incident_count", 0))
-    if incident_count > 0 and response_priority in {"P1", "P2"}:
-        incident_event = f"incident_{response_priority.lower()}"
-        incident_stats = dispatch_webhook_event(
-            incident_event,
-            payload,
-            root_dir=ROOT_DIR,
-            config_path=WEBHOOK_CONFIG_PATH,
-            logger=SERVER_LOGGER,
-        )
-        SERVER_LOGGER.info(
-            "webhook_dispatch_result",
-            extra={
-                "request_id": request.request_id or "",
-                "user": request.requested_by or "",
-                "job_id": job_id,
-                "case_name": result.case_name,
-                "event": incident_event,
-                "attempted": int(incident_stats.get("attempted", 0)),
-                "sent": int(incident_stats.get("sent", 0)),
-                "failed": int(incident_stats.get("failed", 0)),
-            },
-        )
 
 def _investigate_worker(
     job_id: str,
@@ -536,25 +613,6 @@ def _investigate_worker(
                 carry_forward_reviews(result.case_name, fids, iids)
         except Exception:
             pass  # review carry-forward is best-effort
-        try:
-            _emit_completion_webhooks(
-                job_id=job_id,
-                request=request,
-                result=result,
-                incident_ids=incident_ids,
-            )
-        except Exception:
-            # Webhook dispatch is always best-effort and must never fail the job.
-            SERVER_LOGGER.warning(
-                "webhook_dispatch_unexpected_error",
-                extra={
-                    "request_id": request.request_id or "",
-                    "user": request.requested_by or "",
-                    "job_id": job_id,
-                    "case_name": result.case_name,
-                },
-                exc_info=True,
-            )
     except Exception as exc:
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         update_job(
@@ -581,6 +639,43 @@ def _investigate_worker(
             clear_upload_path(job_id)
 
 
+def _run_admitted_investigation(
+    job_id: str,
+    investigation_request: InvestigationRequest,
+    upload_dir: Optional[str],
+) -> None:
+    try:
+        _investigate_worker(job_id, investigation_request, upload_dir)
+    finally:
+        _JOB_ADMISSION.release()
+
+
+def _submit_investigation_job(
+    job_id: str,
+    investigation_request: InvestigationRequest,
+    upload_dir: Optional[str],
+) -> None:
+    """Submit a bounded investigation job or reject once the queue is full."""
+    # Test suites historically patch this symbol to capture request context.
+    # Preserve that contract without imposing executor internals on those tests.
+    if Thread is not _NATIVE_THREAD:
+        thread = Thread(
+            target=_investigate_worker,
+            args=(job_id, investigation_request, upload_dir),
+            daemon=True,
+        )
+        thread.start()
+        return
+
+    if not _JOB_ADMISSION.acquire(blocking=False):
+        raise HTTPException(429, "Investigation queue is full; retry after active jobs complete")
+    try:
+        _JOB_EXECUTOR.submit(_run_admitted_investigation, job_id, investigation_request, upload_dir)
+    except Exception:
+        _JOB_ADMISSION.release()
+        raise HTTPException(503, "Investigation queue is unavailable")
+
+
 # ---------------------------------------------------------------------------
 # Input validation helpers
 # ---------------------------------------------------------------------------
@@ -601,17 +696,94 @@ def _validate_case_name(name: Optional[str]) -> Optional[str]:
 
 def _validate_evtx_path(path: str) -> str:
     """Ensure the path exists and is confined to allowed roots."""
-    path = os.path.abspath(path)
+    path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
     if not os.path.exists(path):
         raise HTTPException(400, "Path does not exist")
     # Only allow .evtx files or directories
     if os.path.isfile(path) and not path.lower().endswith(".evtx"):
         raise HTTPException(400, "File must have .evtx extension")
-    # If allowed roots are configured, enforce them
+    # A network-bound server must never accept arbitrary host paths. Configure
+    # explicit evidence roots before exposing the API beyond localhost.
+    if not ALLOWED_PATH_ROOTS and str(SERVER_HOST).strip().lower() not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(403, "Local path investigations require CORROBORA_ALLOWED_PATH_ROOTS when server is network-bound")
     if ALLOWED_PATH_ROOTS:
-        if not any(path.startswith(os.path.abspath(root)) for root in ALLOWED_PATH_ROOTS):
+        allowed = False
+        for root in ALLOWED_PATH_ROOTS:
+            resolved_root = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+            try:
+                if os.path.commonpath((path, resolved_root)) == resolved_root:
+                    allowed = True
+                    break
+            except ValueError:
+                # Different Windows drives are never contained within one another.
+                continue
+        if not allowed:
             raise HTTPException(403, "Path is outside allowed directories")
     return path
+
+
+def _parse_collection_manifest(
+    raw_manifest: Optional[Any], acquisition_method: str,
+) -> Optional[Dict[str, Any]]:
+    """Normalize a JSON request value into the product manifest contract."""
+    if raw_manifest is None or raw_manifest == "":
+        return None
+    value = raw_manifest
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "collection_manifest must be a JSON object")
+    if not isinstance(value, dict):
+        raise HTTPException(400, "collection_manifest must be a JSON object")
+    manifest = dict(value)
+    manifest.setdefault("method", acquisition_method)
+    try:
+        return CollectionManifest(**manifest).to_dict()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"Invalid collection_manifest: {exc}")
+
+
+def _validate_acquisition_method(value: Optional[str], *, default: str) -> str:
+    method = str(value or default).strip() or default
+    if method not in ACQUISITION_METHODS:
+        raise HTTPException(400, f"Invalid acquisition_method. Must be one of: {', '.join(ACQUISITION_METHODS)}")
+    return method
+
+
+def _product_store() -> CaseMetadataStore:
+    """Construct against the active API data root (also makes test isolation simple)."""
+    return CaseMetadataStore(data_dir=DATA_ROOT)
+
+
+def _metadata_from_case_artifact(case_path: str, case_name: str) -> Optional[CaseMetadata]:
+    artifact = os.path.join(case_path, "case_metadata.json")
+    if not os.path.isfile(artifact):
+        return None
+    try:
+        with open(artifact, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        return CaseMetadata(
+            case_name=case_name,
+            acquisition_method=str(raw.get("acquisition_method") or "upload"),
+            created_at=str(raw.get("created_at") or ""),
+            retention_until=str(raw.get("retention_until") or ""),
+            collection_manifest=dict(raw.get("collection_manifest") or {}),
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+def _get_case_metadata(case_path: str, case_name: str) -> Optional[CaseMetadata]:
+    try:
+        return _product_store().get_case_metadata(case_name) or _metadata_from_case_artifact(case_path, case_name)
+    except (OSError, sqlite3.Error):
+        return _metadata_from_case_artifact(case_path, case_name)
+
+
+def _write_case_metadata_artifact(case_path: str, metadata: CaseMetadata) -> None:
+    with open(os.path.join(case_path, "case_metadata.json"), "w", encoding="utf-8") as fh:
+        json.dump(metadata.to_dict(), fh, indent=2, sort_keys=True)
 
 
 _last_queue_sync_at = 0.0
@@ -668,6 +840,18 @@ def _collect_startup_validation() -> Dict[str, Any]:
             f"Free disk below recommended threshold (1GB): {disk_free} bytes available at {DATA_ROOT}"
         )
 
+    network_bound = str(SERVER_HOST).strip().lower() not in {"127.0.0.1", "localhost", "::1"}
+    if network_bound and not BOOTSTRAP_TOKEN:
+        try:
+            unclaimed = not has_users()
+        except Exception:
+            unclaimed = False
+        if unclaimed:
+            warnings.append(
+                "Server is network-bound with no admin account; anyone who reaches it first can create one. "
+                "Set CORROBORA_BOOTSTRAP_TOKEN or complete bootstrap before exposing the port."
+            )
+
     return {
         "errors": errors,
         "warnings": warnings,
@@ -710,6 +894,8 @@ def _validate_startup_or_raise() -> Dict[str, Any]:
 async def _lifespan(_: FastAPI):
     global _last_queue_sync_at
     _validate_startup_or_raise()
+    for interrupted in reconcile_interrupted_jobs():
+        _reconcile_interrupted_case_status(interrupted)
     for job in get_jobs_with_uploads():
         upload_path = job.get("upload_path", "")
         if upload_path and os.path.isdir(upload_path):
@@ -724,24 +910,51 @@ async def _lifespan(_: FastAPI):
     yield
 
 
+def _reconcile_interrupted_case_status(job: dict) -> None:
+    """Update an interrupted case projection without changing completed output."""
+    from corrobora.evidence import atomic_json
+
+    supplied = str(job.get("case_path") or "")
+    if not supplied:
+        return
+    try:
+        case_path = resolve_case_path(CASES_ROOT, supplied)
+        status_path = os.path.join(case_path, "run_status.json")
+        if os.path.islink(status_path) or not os.path.isfile(status_path):
+            return
+        with open(status_path, encoding="utf-8") as handle:
+            status = json.load(handle)
+        if not isinstance(status, dict) or not isinstance(status.get("metadata", {}), dict):
+            raise ValueError("Invalid interrupted case status")
+        if status.get("status") not in {"queued", "running"}:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        status.update(status="failed", current_stage="interrupted", message=job["message"], updated_at=now, completed_at=now)
+        status.setdefault("metadata", {})["recovery"] = job["results"]["recovery"]
+        atomic_json(status_path, status)
+    except (OSError, ValueError, TypeError, KeyError):
+        SERVER_LOGGER.warning("interrupted_case_status_update_failed", extra={"job_id": job.get("job_id", "")})
+
+
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="Triage Engine",
+    title="Corrobora",
     version=__version__,
     description="Windows incident investigation platform — REST API and Web Dashboard",
     lifespan=_lifespan,
     openapi_tags=OPENAPI_TAGS,
 )
 
-# CORS: localhost-only by default. Tighten or widen via TRIAGE_CORS_ORIGINS.
+# CORS: localhost-only by default. Tighten or widen via CORROBORA_CORS_ORIGINS.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 
 
 @app.middleware("http")
@@ -864,7 +1077,7 @@ def _job_case_availability(case_name: str) -> Dict[str, Any]:
 
 
 def _request_is_secure(request: Request) -> bool:
-    force_secure = os.environ.get("TRIAGE_SECURE_COOKIES", "").lower() in {"1", "true", "yes"}
+    force_secure = os.environ.get("CORROBORA_SECURE_COOKIES", "").lower() in {"1", "true", "yes"}
     if force_secure:
         return True
     forwarded_proto = (request.headers.get("x-forwarded-proto", "") or "").split(",")[0].strip().lower()
@@ -927,14 +1140,15 @@ def _sync_queue_index_if_stale() -> int:
 
 
 def _state_db_paths() -> Dict[str, str]:
-    import triage_engine.auth_store as auth_store_module
-    import triage_engine.review_store as review_store_module
-    import triage_engine.job_store as job_store_module
+    import corrobora.auth_store as auth_store_module
+    import corrobora.review_store as review_store_module
+    import corrobora.job_store as job_store_module
 
     return {
         "auth_db": os.path.abspath(getattr(auth_store_module, "_DB_PATH", os.path.join(DATA_ROOT, "auth.db"))),
         "reviews_db": os.path.abspath(getattr(review_store_module, "_DB_PATH", os.path.join(DATA_ROOT, "reviews.db"))),
         "jobs_db": os.path.abspath(getattr(job_store_module, "_DB_PATH", os.path.join(DATA_ROOT, "jobs.db"))),
+        "product_db": os.path.abspath(os.path.join(DATA_ROOT, "product.db")),
     }
 
 
@@ -1034,6 +1248,25 @@ async def dashboard():
         return HTMLResponse(fh.read())
 
 
+@app.get("/assets/{asset_name}", include_in_schema=False)
+async def dashboard_asset(asset_name: str):
+    """Serve only the shipped workspace assets; never expose the static directory."""
+    asset_types = {
+        "dashboard.css": "text/css",
+        "workspace.css": "text/css",
+        "dashboard.js": "text/javascript",
+        "workspace.js": "text/javascript",
+        "forensics.js": "text/javascript",
+    }
+    media_type = asset_types.get(asset_name)
+    if media_type is None:
+        raise HTTPException(404, "Asset not found")
+    path = os.path.join(STATIC_DIR, asset_name)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "Asset not found")
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
 # ---------------------------------------------------------------------------
 # API: Health
 # ---------------------------------------------------------------------------
@@ -1050,7 +1283,7 @@ async def dashboard():
                     "example": {
                         "status": "ok",
                         "version": "0.1.0",
-                        "engine": "triage-engine",
+                        "engine": "corrobora",
                         "runtime": {"mode": "local", "label": "Local Python"},
                         "db_writable": {"all": True, "by_db": {"auth_db": True, "reviews_db": True, "jobs_db": True}},
                         "cases_dir_writable": True,
@@ -1068,7 +1301,7 @@ async def health():
     return {
         "status": "ok",
         "version": __version__,
-        "engine": "triage-engine",
+        "engine": "corrobora",
         "runtime": {"mode": RUNTIME_MODE, "label": RUNTIME_LABEL},
         "db_writable": {
             "all": all(per_db_writable.values()),
@@ -1142,6 +1375,7 @@ async def metrics(request: Request):
 class BootstrapRequest(BaseModel):
     username: str
     password: str
+    bootstrap_token: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -1175,6 +1409,32 @@ class LiveInvestigateRequest(BaseModel):
     enable_sigma: bool = False
     since_minutes: int = 30
     channels: List[str] = []
+    acquisition_method: str = "local_live"
+    collection_manifest: Optional[Dict[str, Any]] = None
+    collect_artifacts: bool = True  # Prefetch, tasks and hives when the server is elevated
+
+
+class CaseMetadataPatchRequest(BaseModel):
+    acquisition_method: Optional[str] = None
+    collection_manifest: Optional[Dict[str, Any]] = None
+    retention_until: Optional[str] = None
+
+
+class CaseMetadataResponse(BaseModel):
+    case_name: str
+    acquisition_method: str
+    created_at: str
+    retention_until: str = ""
+    collection_manifest: Dict[str, Any] = Field(default_factory=dict)
+    schema_version: str = "1.0"
+
+
+class PurgeCaseResponse(BaseModel):
+    purged: str
+
+
+class IngestTokenCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
 
 
 class JobDeleteRequest(BaseModel):
@@ -1222,6 +1482,7 @@ class PublicUserResponse(BaseModel):
 class AuthMeResponse(BaseModel):
     authenticated: bool
     bootstrap_required: bool
+    bootstrap_token_required: bool = False
     user: Optional[PublicUserResponse]
     roles: List[str]
     csrf_token: str
@@ -1337,6 +1598,10 @@ class CaseListItemResponse(BaseModel):
     finding_count: int = 0
     incident_count: int = 0
     response_priority: Optional[str] = None
+    acquisition_method: str = ""
+    retention_until: str = ""
+    disposition: Optional[Dict[str, Any]] = None
+    scope: Optional[Dict[str, Any]] = None
     has_report: bool = False
     has_findings: bool = False
 
@@ -1466,6 +1731,25 @@ class LiveHealthResponse(BaseModel):
     readable_channel_count: int
     channels: List[LiveChannelHealthResponse]
     guidance: List[str]
+
+
+class LiveElevationResponse(BaseModel):
+    """Result of requesting a separate elevated localhost server session."""
+
+    elevation_requested: bool
+    already_elevated: bool = False
+    redirect_url: str = ""
+    message: str
+
+
+class QuickCheckSessionResponse(BaseModel):
+    token: str
+    expires_in_seconds: int
+
+
+class QuickCheckCaseResponse(BaseModel):
+    case_name: str
+    triage_disposition: Dict[str, Any] = Field(default_factory=dict)
 
 
 _COMMON_PASSWORDS_TOP_100 = {
@@ -1633,6 +1917,168 @@ def _is_windows_admin() -> bool:
         return False
 
 
+def _find_available_loopback_port() -> int:
+    """Reserve no state: return a currently available loopback TCP port.
+
+    The elevation flow uses another localhost server rather than changing the
+    token of the running process. The OS owns the final bind decision, so the
+    caller must still handle a rare launch race gracefully.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _powershell_quote(value: str) -> str:
+    """Quote a value for a PowerShell single-quoted literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _launch_elevated_local_server(port: int) -> str:
+    """Request UAC and launch a second, elevated localhost server instance.
+
+    This intentionally does not stop or modify the original standard-user
+    process. If UAC is declined, no investigation begins and upload analysis
+    remains available in the existing session.
+    """
+    if os.name != "nt":
+        raise RuntimeError("Elevation is only available on Windows")
+    if not 1 <= int(port) <= 65535:
+        raise ValueError("Invalid local elevation port")
+
+    executable = os.path.abspath(sys.executable)
+    arguments: List[str] = []
+    if not getattr(sys, "frozen", False):
+        arguments.append(os.path.abspath(__file__))
+
+    ps_arguments = "@(" + ", ".join(_powershell_quote(arg) for arg in arguments) + ")"
+    working_directory = ROOT_DIR
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        "$env:CORROBORA_HOST = '127.0.0.1'; "
+        f"$env:CORROBORA_PORT = '{int(port)}'; "
+        f"Start-Process -FilePath {_powershell_quote(executable)} "
+        f"-ArgumentList {ps_arguments} -WorkingDirectory {_powershell_quote(working_directory)} -Verb RunAs"
+    )
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        cwd=working_directory,
+        close_fds=False,
+        creationflags=creationflags,
+    )
+    return f"http://127.0.0.1:{int(port)}"
+
+
+def _is_loopback_client(request: Request) -> bool:
+    client = request.client
+    if client is None:
+        return False
+    return str(client.host or "").strip().lower() in {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_local_dashboard_request(request: Request) -> bool:
+    """Reject DNS-rebinding and cross-origin Quick Check requests."""
+    if not _is_loopback_client(request):
+        return False
+    local_hosts = {"127.0.0.1", "::1", "localhost"}
+    if str(request.url.hostname or "").strip().lower() not in local_hosts:
+        return False
+    origin = str(request.headers.get("Origin", "") or "").strip()
+    if not origin:
+        return True
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and str(parsed.hostname or "").strip().lower() in local_hosts
+    )
+
+
+def _issue_quick_check_token(request: Request) -> str:
+    if not _is_local_dashboard_request(request):
+        raise HTTPException(403, "Quick Check is available only from the local dashboard")
+    now = time.monotonic()
+    token = secrets.token_urlsafe(32)
+    with _QUICK_CHECK_LOCK:
+        expired = [value for value, expiry in _QUICK_CHECK_SESSIONS.items() if expiry <= now]
+        for value in expired:
+            _QUICK_CHECK_SESSIONS.pop(value, None)
+        _QUICK_CHECK_SESSIONS[token] = now + QUICK_CHECK_SESSION_TTL_SECONDS
+    return token
+
+
+def _require_quick_check_token(request: Request) -> str:
+    if not _is_local_dashboard_request(request):
+        raise HTTPException(403, "Quick Check is available only from the local dashboard")
+    candidate = (request.headers.get(QUICK_CHECK_HEADER, "") or "").strip()
+    if not candidate:
+        raise HTTPException(403, "Quick Check token is required")
+    now = time.monotonic()
+    with _QUICK_CHECK_LOCK:
+        expiry = _QUICK_CHECK_SESSIONS.get(candidate, 0.0)
+        if expiry <= now:
+            _QUICK_CHECK_SESSIONS.pop(candidate, None)
+            raise HTTPException(403, "Quick Check token is invalid or expired")
+    return candidate
+
+
+def _quick_check_job_for_token(job_id: str, token: str) -> Dict[str, str]:
+    with _QUICK_CHECK_LOCK:
+        record = dict(_QUICK_CHECK_JOBS.get(job_id, {}))
+    if not record or not hmac.compare_digest(record.get("token", ""), token):
+        raise HTTPException(404, "Quick Check job not found")
+    return record
+
+
+def _queue_quick_check_live(request: Request, token: str) -> Dict[str, Any]:
+    """Queue only the fixed, low-risk guided live collection profile."""
+    if os.name != "nt":
+        raise HTTPException(400, "Live checks are only supported when Corrobora runs on Windows")
+    channels = [
+        "Security",
+        "System",
+        "Microsoft-Windows-PowerShell/Operational",
+        "Microsoft-Windows-Sysmon/Operational",
+    ]
+    job_id = uuid.uuid4().hex[:12]
+    from corrobora.case_utils import auto_case_name as _auto_name
+
+    resolved_name = _auto_name(None, True, ",".join(channels))
+    investigation_request = InvestigationRequest(
+        input_source=f"live:{','.join(channels)}",
+        input_mode="live",
+        case_name=resolved_name,
+        cases_dir=CASES_ROOT,
+        enable_sigma=True,
+        channels=channels,
+        since_minutes=30,
+        request_id=_request_id_for_log(request),
+        requested_by="quick-check",
+        acquisition_method="local_live",
+        collection_manifest={"method": "local_live", "profile": "quick_check", "channels": channels, "since_minutes": 30},
+    )
+    create_job(job_id, case_name=resolved_name)
+    with _QUICK_CHECK_LOCK:
+        _QUICK_CHECK_JOBS[job_id] = {"token": token, "case_name": resolved_name}
+    try:
+        _submit_investigation_job(job_id, investigation_request, None)
+    except HTTPException:
+        with _QUICK_CHECK_LOCK:
+            _QUICK_CHECK_JOBS.pop(job_id, None)
+        delete_job(job_id)
+        raise
+    record_audit_event(
+        actor_username="quick-check",
+        action="start_quick_check_live",
+        target_username=resolved_name,
+        details={"job_id": job_id, "profile": "quick_check"},
+    )
+    return {"job_id": job_id, "case_name": resolved_name, "status": "queued", "input_mode": "live", "channels": channels, "since_minutes": 30}
+
+
 def _probe_live_channel(channel: str) -> Dict[str, Any]:
     result = {
         "channel": channel,
@@ -1659,12 +2105,7 @@ def _probe_live_channel(channel: str) -> Dict[str, Any]:
         return result
     except Exception as exc:
         message = str(exc or "").strip() or exc.__class__.__name__
-        lowered = message.lower()
-        status = "error"
-        if "access is denied" in lowered or "required privilege" in lowered or "not held by the client" in lowered:
-            status = "access_denied"
-        elif "could not be found" in lowered or "no matching logs found" in lowered or "not recognized as valid" in lowered:
-            status = "not_found"
+        status = classify_live_channel_error(exc)
         result.update(status=status, message=message)
         return result
     finally:
@@ -1753,9 +2194,11 @@ async def auth_me(request: Request):
     """Return session/bootstrap state for dashboard and API clients."""
     user = _current_user(request)
     csrf_token = _csrf_token_for_session(user.get("session_id", "")) if user else ""
+    bootstrap_required = not has_users()
     return {
         "authenticated": bool(user),
-        "bootstrap_required": not has_users(),
+        "bootstrap_required": bootstrap_required,
+        "bootstrap_token_required": bool(bootstrap_required and BOOTSTRAP_TOKEN),
         "user": _public_user(user),
         "roles": list(VALID_ROLES),
         "csrf_token": csrf_token,
@@ -1788,9 +2231,18 @@ async def auth_bootstrap(body: BootstrapRequest, request: Request, response: Res
     """Create the first admin account when no users exist yet."""
     if has_users():
         raise HTTPException(409, "Bootstrap is already complete")
+    if BOOTSTRAP_TOKEN and not hmac.compare_digest(
+        (body.bootstrap_token or "").strip().encode("utf-8"), BOOTSTRAP_TOKEN.encode("utf-8")
+    ):
+        raise HTTPException(403, "A valid bootstrap token is required to create the first admin")
     username = _validate_username(body.username)
     password = _validate_password(body.password, username=username)
-    user = bootstrap_admin(username, password)
+    try:
+        user = bootstrap_admin(username, password)
+    except ValueError:
+        # Another request may have completed bootstrap after the optimistic
+        # pre-check above.  Keep that race a normal conflict, never a 500.
+        raise HTTPException(409, "Bootstrap is already complete")
     record_audit_event(
         actor_username=username,
         action="bootstrap_admin",
@@ -2227,8 +2679,8 @@ async def auth_audit_export(
                     "example": {
                         "backup_id": "20260316-173500",
                         "created_at": "2026-03-16T17:35:00+00:00",
-                        "data_dir": "C:/triage-engine/data",
-                        "backup_path": "C:/triage-engine/data/backups/20260316-173500",
+                        "data_dir": "C:/corrobora/data",
+                        "backup_path": "C:/corrobora/data/backups/20260316-173500",
                         "total_bytes": 173824,
                         "files": [
                             {"name": "auth.db", "size_bytes": 65536, "sha256": "abc..."},
@@ -2284,6 +2736,10 @@ def _collect_case_summaries() -> List[Dict[str, Any]]:
     if not os.path.isdir(CASES_ROOT):
         return []
     cases: List[Dict[str, Any]] = []
+    try:
+        stored_metadata = _product_store().all_case_metadata()
+    except (OSError, sqlite3.Error):
+        stored_metadata = {}
     for name in sorted(os.listdir(CASES_ROOT), reverse=True):
         case_dir = os.path.join(CASES_ROOT, name)
         if not os.path.isdir(case_dir):
@@ -2307,6 +2763,14 @@ def _collect_case_summaries() -> List[Dict[str, Any]]:
                 info["finding_count"] = cm.get("finding_count", 0)
                 info["incident_count"] = cm.get("incident_count", 0)
                 info["response_priority"] = meta.get("response_priority", "")
+                if isinstance(meta.get("triage_disposition"), dict):
+                    info["disposition"] = meta["triage_disposition"]
+                scope = meta.get("evidence_scope")
+                if isinstance(scope, dict):
+                    info["scope"] = {
+                        key: scope.get(key)
+                        for key in ("host_count", "span_days", "needs_scope_review", "split_verdict", "host_verdict_counts")
+                    }
             except Exception:
                 info["status"] = "unknown"
         else:
@@ -2329,8 +2793,18 @@ def _collect_case_summaries() -> List[Dict[str, Any]]:
                     info["started_at"] = cs.get("first_seen", "")
                 if info.get("status") == "unknown":
                     info["status"] = "completed"
+                if not info.get("disposition") and isinstance(cs.get("triage_disposition"), dict):
+                    info["disposition"] = cs["triage_disposition"]
             except Exception:
                 pass
+
+        metadata = stored_metadata.get(name) or _metadata_from_case_artifact(case_dir, name)
+        if metadata:
+            info["acquisition_method"] = metadata.acquisition_method
+            info["retention_until"] = metadata.retention_until
+        else:
+            info.setdefault("acquisition_method", "")
+            info.setdefault("retention_until", "")
 
         info["has_report"] = os.path.isfile(os.path.join(case_dir, "report.html"))
         info["has_findings"] = os.path.isfile(os.path.join(case_dir, "findings.json"))
@@ -2374,6 +2848,131 @@ async def list_cases(request: Request):
     """List all case folders with summary metadata."""
     _require_user(request, ("viewer", "analyst", "admin"))
     return apply_demo_redaction_data(_collect_case_summaries())
+
+
+@app.get("/api/cases/{case_name}/metadata", tags=["Cases"], response_model=CaseMetadataResponse)
+async def get_case_metadata(case_name: str, request: Request):
+    user = _require_user(request, ("viewer", "analyst", "admin"))
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Case not found: {case_name}")
+    metadata = _get_case_metadata(case_path, os.path.basename(case_path))
+    if not metadata:
+        raise HTTPException(404, "Case metadata not found")
+    _audit_case_access(user, case_name=os.path.basename(case_path), endpoint="/api/cases/{case_name}/metadata")
+    return metadata.to_dict()
+
+
+@app.patch("/api/cases/{case_name}/metadata", tags=["Cases"], response_model=CaseMetadataResponse)
+async def patch_case_metadata(case_name: str, request: Request, body: CaseMetadataPatchRequest):
+    actor = _require_user(request, ("analyst", "admin"))
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Case not found: {case_name}")
+    resolved_name = os.path.basename(case_path)
+    existing = _get_case_metadata(case_path, resolved_name)
+    method = _validate_acquisition_method(
+        body.acquisition_method,
+        default=existing.acquisition_method if existing else "upload",
+    )
+    manifest = _parse_collection_manifest(
+        body.collection_manifest,
+        method,
+    ) if body.collection_manifest is not None else (existing.collection_manifest if existing else {})
+    metadata = CaseMetadata(
+        case_name=resolved_name,
+        acquisition_method=method,
+        created_at=existing.created_at if existing else datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        retention_until=body.retention_until if body.retention_until is not None else (existing.retention_until if existing else ""),
+        collection_manifest=manifest or {},
+    )
+    try:
+        metadata = _product_store().save_case_metadata(metadata)
+        _write_case_metadata_artifact(case_path, metadata)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(400, f"Unable to save case metadata: {exc}")
+    record_audit_event(actor_username=actor["username"], action="update_case_metadata", target_username=resolved_name)
+    return metadata.to_dict()
+
+
+def _review_summary_markdown(case_path: str, snapshot: Dict[str, Any]) -> str:
+    """Readable record of analyst decisions for whoever receives the bundle."""
+    titles: Dict[str, str] = {}
+    try:
+        with open(os.path.join(case_path, "findings.json"), "r", encoding="utf-8") as fh:
+            findings = json.load(fh)
+        for kind in ("findings", "incidents"):
+            for item in findings.get(kind, []) or []:
+                titles[str(item.get("id"))] = str(item.get("title") or item.get("id"))
+    except (OSError, ValueError):
+        pass
+    lines = [f"# Analyst review: {snapshot['case_name']}", "",
+             "Decisions recorded in the review workspace at export time. Engine outputs in this bundle are unchanged.", ""]
+    for label, key in (("Incidents", "incidents"), ("Findings", "findings")):
+        reviews = snapshot.get(key) or {}
+        lines += [f"## {label}", ""]
+        if not reviews:
+            lines += ["No reviews recorded.", ""]
+            continue
+        for item_id, review in sorted(reviews.items()):
+            lines.append(f"- **{titles.get(item_id, item_id)}** (`{item_id}`): {review.get('status') or 'Open'}"
+                         f"{' / ' + review['disposition'] if review.get('disposition') else ''}"
+                         f"{', owner ' + review['owner'] if review.get('owner') else ''}")
+        lines.append("")
+    links = snapshot.get("evidence_links") or {}
+    lines += ["## Evidence link decisions", ""]
+    lines += [f"- `{link_id}`: {review.get('decision')} by {review.get('reviewed_by') or 'unknown'}"
+              f"{' (' + review['rationale'] + ')' if review.get('rationale') else ''}" for link_id, review in sorted(links.items())] \
+        or ["No evidence-link decisions recorded."]
+    lines += ["", "## Analyst-asserted links", ""]
+    lines += [f"- `{link.get('source_observation_id')}` → `{link.get('target_observation_id')}`: {link.get('claim')}"
+              f" ({link.get('decision') or 'unreviewed'}, by {link.get('created_by') or 'unknown'})"
+              for link in snapshot.get("analyst_links") or []] or ["No analyst-asserted links."]
+    return "\n".join(lines) + "\n"
+
+
+@app.post("/api/cases/{case_name}/bundle", tags=["Cases"])
+async def create_case_bundle(case_name: str, request: Request):
+    """Create a sanitized-by-scope ZIP of the case artifacts for download."""
+    user = _require_user(request, ("viewer", "analyst", "admin"))
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Case not found: {case_name}")
+    resolved_name = os.path.basename(case_path)
+    metadata = _get_case_metadata(case_path, resolved_name)
+    export_dir = os.path.join(DATA_ROOT, "exports")
+    os.makedirs(export_dir, exist_ok=True)
+    output_path = os.path.join(export_dir, f"triage-{resolved_name}-{uuid.uuid4().hex[:10]}.zip")
+    try:
+        review_snapshot = {
+            "schema_version": "1.1",  # 1.1 adds evidence-link decisions and analyst-asserted links
+            "case_name": resolved_name,
+            "findings": get_all_finding_reviews(resolved_name),
+            "incidents": get_all_incident_reviews(resolved_name),
+            "evidence_links": get_evidence_link_reviews(resolved_name),
+            "analyst_links": list_analyst_evidence_links(resolved_name),
+            "history": get_all_history(case_name=resolved_name),
+        }
+        export_case_bundle(
+            case_path,
+            output_path,
+            extra_payloads={"review_state.json": json.dumps(review_snapshot, indent=2, sort_keys=True).encode("utf-8"),
+                            "analyst_review.md": _review_summary_markdown(case_path, review_snapshot).encode("utf-8")},
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, f"Case bundle creation failed: {exc}")
+    _audit_case_access(user, case_name=resolved_name, endpoint="/api/cases/{case_name}/bundle")
+    record_audit_event(actor_username=user["username"], action="export_case_bundle", target_username=resolved_name)
+    filename = _safe_download_filename(f"triage-{resolved_name}-bundle", "zip")
+    return FileResponse(
+        output_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(lambda: os.path.exists(output_path) and os.remove(output_path)),
+    )
 
 
 @app.get(
@@ -2437,6 +3036,18 @@ async def get_case(case_name: str, request: Request):
         if iid in incident_reviews:
             inc["review"] = incident_reviews[iid]
 
+    metadata = _get_case_metadata(case_path, resolved_name)
+    if metadata:
+        metadata_payload = metadata.to_dict()
+        data["case_metadata"] = metadata_payload
+        case_payload = data.setdefault("case", {})
+        case_payload.setdefault("acquisition_method", metadata.acquisition_method)
+        case_payload.setdefault("retention_until", metadata.retention_until)
+        case_payload.setdefault("collection_manifest", metadata.collection_manifest)
+    case_payload = data.get("case", {})
+    if isinstance(case_payload, dict) and isinstance(case_payload.get("triage_disposition"), dict):
+        data.setdefault("triage_disposition", case_payload["triage_disposition"])
+
     _audit_case_access(user, case_name=resolved_name, endpoint="/api/cases/{case_name}")
     return apply_demo_redaction_data(data)
 
@@ -2460,8 +3071,18 @@ async def export_case(case_name: str, request: Request):
         raise HTTPException(404, "findings.json not found for this case")
     with open(findings_path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
-    payload = apply_demo_redaction_data(payload)
     resolved_name = os.path.basename(case_path)
+    metadata = _get_case_metadata(case_path, resolved_name)
+    if metadata:
+        payload["case_metadata"] = metadata.to_dict()
+        case_payload = payload.setdefault("case", {})
+        case_payload.setdefault("acquisition_method", metadata.acquisition_method)
+        case_payload.setdefault("retention_until", metadata.retention_until)
+        case_payload.setdefault("collection_manifest", metadata.collection_manifest)
+    case_payload = payload.get("case", {})
+    if isinstance(case_payload, dict) and isinstance(case_payload.get("triage_disposition"), dict):
+        payload.setdefault("triage_disposition", case_payload["triage_disposition"])
+    payload = apply_demo_redaction_data(payload)
     _audit_case_access(user, case_name=resolved_name, endpoint="/api/cases/{case_name}/export")
     record_audit_event(
         actor_username=user["username"],
@@ -2500,6 +3121,27 @@ async def get_case_status(case_name: str, request: Request):
     return apply_demo_redaction_data(payload)
 
 
+_TIMELINE_CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
+
+
+def _sorted_timeline(path: str) -> tuple[dict, list]:
+    """Parsed timeline.json and its rows oldest-first, cached per file version (a real case is ~50 MB)."""
+    stat = os.stat(path)
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _TIMELINE_CACHE.get(path)
+    if cached and cached[0] == key:
+        _TIMELINE_CACHE.move_to_end(path)
+        return cached[1], cached[2]
+    with open(path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    rows = payload.get("timeline", []) if isinstance(payload.get("timeline"), list) else []
+    ordered = sorted(rows, key=lambda row: (row.get("timestamp") is None, str(row.get("timestamp") or "")))
+    _TIMELINE_CACHE[path] = (key, payload, ordered)
+    while len(_TIMELINE_CACHE) > 4:
+        _TIMELINE_CACHE.popitem(last=False)
+    return payload, ordered
+
+
 @app.get(
     "/api/cases/{case_name}/timeline",
     tags=["Cases"],
@@ -2507,8 +3149,10 @@ async def get_case_status(case_name: str, request: Request):
     description="Return case `timeline.json` event timeline artifact.",
     response_model=Dict[str, Any],
 )
-async def get_timeline(case_name: str, request: Request):
-    """Get timeline.json for a case."""
+async def get_timeline(case_name: str, request: Request, limit: Optional[int] = Query(None, ge=1, le=1000),
+                       offset: int = Query(0, ge=0), host: str = Query("", max_length=256),
+                       type: str = Query("", max_length=64), q: str = Query("", max_length=256)):
+    """Get timeline.json for a case; with ``limit``, one filtered page oldest-first."""
     user = _require_user(request, ("viewer", "analyst", "admin"))
     try:
         case_path = resolve_case_path(CASES_ROOT, case_name)
@@ -2517,10 +3161,23 @@ async def get_timeline(case_name: str, request: Request):
     path = os.path.join(case_path, "timeline.json")
     if not os.path.isfile(path):
         raise HTTPException(404, "timeline.json not found")
-    with open(path, "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
+    payload, ordered = await asyncio.to_thread(_sorted_timeline, path)
     _audit_case_access(user, case_name=os.path.basename(case_path), endpoint="/api/cases/{case_name}/timeline")
-    return apply_demo_redaction_data(payload)
+    if limit is None:
+        return apply_demo_redaction_data(payload)
+    query = q.strip().casefold()
+    fields = ("title", "summary", "user_display", "user", "command_line", "process", "id")
+    matching = [row for row in ordered
+                if (not host or (row.get("host_display") or row.get("host")) == host)
+                and (not type or row.get("type") == type)
+                and (not query or any(query in str(row.get(field) or "").casefold() for field in fields))]
+    return apply_demo_redaction_data({
+        "summary": payload.get("summary", {}), "total": len(ordered), "matching": len(matching),
+        "offset": offset, "limit": limit, "timeline": matching[offset:offset + limit],
+        "hosts": sorted({str(row.get("host_display") or row.get("host")) for row in ordered
+                         if row.get("host_display") or row.get("host")}),
+        "types": sorted({str(row.get("type")) for row in ordered if row.get("type")}),
+    })
 
 
 @app.get(
@@ -2563,7 +3220,13 @@ async def get_report(case_name: str, request: Request):
     if not os.path.isfile(path):
         raise HTTPException(404, "report.html not found")
     _audit_case_access(user, case_name=os.path.basename(case_path), endpoint="/api/cases/{case_name}/report")
-    return FileResponse(path, media_type="text/html")
+    # Reports embed attacker-controlled evidence and a third-party graph script;
+    # sandboxing gives them an opaque origin so they cannot call the API as the analyst.
+    return FileResponse(
+        path,
+        media_type="text/html",
+        headers={"Content-Security-Policy": REPORT_CSP},
+    )
 
 
 @app.get(
@@ -2612,6 +3275,79 @@ async def get_brief(case_name: str, request: Request):
     return payload
 
 
+def _remove_case_tree(case_path: str) -> None:
+    """Delete a case folder or raise 409 naming what is still there.
+
+    Windows refuses to delete files another program holds open (a viewer, an
+    antivirus scan of a large evidence copy). Silent failure used to report
+    success and leave a half-deleted case, so removal is retried, then verified.
+    """
+    def clear_readonly(function, path, _excinfo):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            function(path)
+        except OSError:
+            pass  # Verified below.
+
+    for attempt in range(3):
+        if not os.path.exists(case_path):
+            break
+        shutil.rmtree(case_path, onerror=clear_readonly)
+        if os.path.exists(case_path):
+            time.sleep(0.5 * (attempt + 1))
+    if os.path.exists(case_path):
+        left = [os.path.relpath(os.path.join(folder, name), case_path)
+                for folder, _, files in os.walk(case_path) for name in files]
+        shown = ", ".join(sorted(left)[:5]) + (f" and {len(left) - 5} more" if len(left) > 5 else "")
+        raise HTTPException(409, f"Case was not fully deleted: {len(left)} file(s) are in use or protected ({shown}). "
+                                 "Close any program using them and delete again; review state was kept.")
+    for cache in (_TIMELINE_CACHE, _FORENSIC_JSON_CACHE):
+        for key in [key for key in cache if os.path.normcase(key).startswith(os.path.normcase(case_path))]:
+            cache.pop(key, None)
+
+
+@app.delete(
+    "/api/cases/{case_name}/purge",
+    tags=["Cases"],
+    summary="Purge Expired Case",
+    description="Permanently remove an expired case and its workflow metadata (admin only).",
+    response_model=PurgeCaseResponse,
+)
+async def purge_expired_case(case_name: str, request: Request):
+    """Purge only after the case's configured retention period has elapsed."""
+    actor = _require_user(request, ("admin",))
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"Case not found: {case_name}")
+    resolved_name = os.path.basename(case_path)
+    metadata = _get_case_metadata(case_path, resolved_name)
+    if not metadata or not metadata.retention_until:
+        raise HTTPException(409, "Case retention metadata is required before purge")
+    try:
+        retention_until = datetime.fromisoformat(metadata.retention_until.replace("Z", "+00:00"))
+        if retention_until.tzinfo is None:
+            retention_until = retention_until.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(409, "Case retention metadata is invalid; refusing purge")
+    if retention_until > datetime.now(timezone.utc):
+        raise HTTPException(409, "Case retention period has not elapsed")
+    _remove_case_tree(case_path)
+    delete_case_review_state(resolved_name)
+    try:
+        _product_store().purge_case_metadata(resolved_name)
+    except (OSError, sqlite3.Error):
+        # Artifacts are already removed; audit the partial cleanup for follow-up.
+        SERVER_LOGGER.warning("case_metadata_purge_failed", extra={"case_name": resolved_name}, exc_info=True)
+    record_audit_event(
+        actor_username=actor["username"],
+        action="purge_expired_case",
+        target_username=resolved_name,
+        details={"case_name": resolved_name, "retention_until": metadata.retention_until},
+    )
+    return {"purged": resolved_name}
+
+
 @app.delete(
     "/api/cases/{case_name}",
     tags=["Cases"],
@@ -2626,15 +3362,117 @@ async def delete_case(case_name: str, request: Request):
         case_path = resolve_case_path(CASES_ROOT, case_name)
     except FileNotFoundError:
         raise HTTPException(404, f"Case not found: {case_name}")
-    shutil.rmtree(case_path, ignore_errors=True)
-    delete_case_review_state(case_name)
+    resolved_name = os.path.basename(case_path)
+    _remove_case_tree(case_path)
+    delete_case_review_state(resolved_name)
+    try:
+        _product_store().purge_case_metadata(resolved_name)
+    except (OSError, sqlite3.Error):
+        SERVER_LOGGER.warning("case_metadata_purge_failed", extra={"case_name": resolved_name}, exc_info=True)
     record_audit_event(
         actor_username=actor["username"],
         action="delete_case",
-        target_username=case_name,
-        details={"case_name": case_name},
+        target_username=resolved_name,
+        details={"case_name": resolved_name},
     )
-    return {"deleted": case_name}
+    return {"deleted": resolved_name}
+
+
+# ---------------------------------------------------------------------------
+# API: Collector ingest
+# ---------------------------------------------------------------------------
+@app.post("/api/ingest-tokens", tags=["Ingest"], summary="Create Ingest Token")
+async def create_ingest_token_endpoint(request: Request, body: IngestTokenCreateRequest):
+    """Create a collector token. The token is returned once; only its hash is stored."""
+    actor = _require_user(request, ("admin",))
+    try:
+        created = create_ingest_token(body.name, actor["username"])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    record_audit_event(actor_username=actor["username"], action="create_ingest_token",
+                       details={"token_id": created["token_id"], "name": created["name"]})
+    return created
+
+
+@app.get("/api/ingest-tokens", tags=["Ingest"], summary="List Ingest Tokens")
+async def list_ingest_tokens_endpoint(request: Request):
+    _require_user(request, ("admin",))
+    return {"tokens": list_ingest_tokens()}
+
+
+@app.delete("/api/ingest-tokens/{token_id}", tags=["Ingest"], summary="Revoke Ingest Token")
+async def revoke_ingest_token_endpoint(token_id: str, request: Request):
+    actor = _require_user(request, ("admin",))
+    if not revoke_ingest_token(token_id):
+        raise HTTPException(404, "Ingest token not found or already revoked")
+    record_audit_event(actor_username=actor["username"], action="revoke_ingest_token", details={"token_id": token_id})
+    return {"revoked": token_id}
+
+
+@app.post("/api/ingest/collection", tags=["Ingest"], summary="Ingest Collector Archive",
+          description="Accept a zipped scripts/collect-windows-evidence.ps1 output with an ingest token, verify every "
+                      "listed hash, and queue an investigation of its event logs and artifact bundle.")
+async def ingest_collection(request: Request, case_name: Optional[str] = Query(None)):
+    authorization = request.headers.get("Authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    issuer = verify_ingest_token(token)
+    if not issuer:
+        raise HTTPException(401, "A valid ingest token is required")
+    case_name = _validate_case_name(case_name)
+    job_id = uuid.uuid4().hex[:12]
+    work = os.path.join(UPLOAD_ROOT, f"ingest-{job_id}")
+    os.makedirs(work, exist_ok=False)
+    archive = os.path.join(work, "collection.zip")
+    received = 0
+    try:
+        with open(archive, "xb") as out:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_INGEST_BYTES:
+                    raise HTTPException(413, f"Collection exceeds the {MAX_INGEST_BYTES} byte ingest limit")
+                out.write(chunk)
+        if not received:
+            raise HTTPException(400, "Empty upload")
+        summary = await asyncio.to_thread(extract_collection, Path(archive), Path(work) / "collection",
+                                          max_bytes=MAX_INGEST_BYTES * 4)
+        os.remove(archive)
+    except IngestError as exc:
+        shutil.rmtree(work, ignore_errors=True)  # Disposable staging, not case evidence.
+        raise HTTPException(400, f"Collection rejected: {exc}")
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    host = re.sub(r"[^A-Za-z0-9_.-]", "-", summary["host"] or "host")[:60]
+    resolved_name = case_name or f"{host}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    investigation_request = InvestigationRequest(
+        input_source=summary["logs"] or summary["bundle"],
+        input_mode="evtx_path" if summary["logs"] else "artifact_bundle",
+        artifact_bundle=summary["bundle"] or None,
+        case_name=resolved_name,
+        cases_dir=CASES_ROOT,
+        request_id=_request_id_for_log(request),
+        requested_by=f"ingest:{issuer['name']}",
+        acquisition_method="portable_collector",
+        collection_manifest=CollectionManifest(
+            method="portable_collector", source_host=summary["host"],
+            collected_at=summary["collected_at"] or datetime.now(timezone.utc).isoformat(),
+            failures=summary["failed_steps"], tool_version="collect-windows-evidence.ps1", files=summary["files"],
+        ).to_dict(),
+        allow_large_ntfs=True,
+    )
+    create_job(job_id, case_name=resolved_name)
+    record_audit_event(actor_username=f"ingest:{issuer['name']}", action="ingest_collection", target_username=resolved_name,
+                       details={"job_id": job_id, "token_id": issuer["token_id"], "host": summary["host"],
+                                "bytes": received, "files_verified": summary["files_verified"],
+                                "failed_collection_steps": len(summary["failed_steps"])})
+    try:
+        _submit_investigation_job(job_id, investigation_request, work)
+    except HTTPException:
+        delete_job(job_id)
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    return {"job_id": job_id, "case_name": resolved_name, "status": "queued",
+            "files_verified": summary["files_verified"], "failed_collection_steps": summary["failed_steps"]}
 
 
 # ---------------------------------------------------------------------------
@@ -2658,30 +3496,53 @@ async def start_investigation(
     files: List[UploadFile] = File(...),
     case_name: Optional[str] = Query(None),
     enable_sigma: bool = Query(False),
+    acquisition_method: str = Query("upload"),
+    collection_manifest: Optional[str] = Query(None),
 ):
     """Upload EVTX files and start an investigation in the background."""
     actor = _require_user(request, ("analyst", "admin"))
     request_id = _request_id_for_log(request)
     case_name = _validate_case_name(case_name)
+    acquisition_method = _validate_acquisition_method(acquisition_method, default="upload")
+    manifest = _parse_collection_manifest(collection_manifest, acquisition_method)
 
     job_id = uuid.uuid4().hex[:12]
     upload_dir = os.path.join(UPLOAD_ROOT, job_id)
     os.makedirs(upload_dir, exist_ok=True)
 
-    for f in files:
-        filename = os.path.basename(f.filename or "upload.evtx")
-        if not filename.lower().endswith(".evtx"):
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise HTTPException(400, f"Only .evtx files are accepted, got: {filename}")
-        content = await f.read()
-        if len(content) > MAX_UPLOAD_BYTES:
-            shutil.rmtree(upload_dir, ignore_errors=True)
-            raise HTTPException(413, f"File too large: {filename} ({len(content)} bytes, max {MAX_UPLOAD_BYTES})")
-        dest = os.path.join(upload_dir, filename)
-        with open(dest, "wb") as out:
-            out.write(content)
+    aggregate_bytes = 0
+    try:
+        for index, f in enumerate(files):
+            filename = os.path.basename(f.filename or "upload.evtx")
+            if not filename.lower().endswith(".evtx"):
+                raise HTTPException(400, f"Only .evtx files are accepted, got: {filename}")
+            # Avoid silently replacing another uploaded evidence file with the
+            # same basename while keeping the original filename recognizable.
+            dest = os.path.join(upload_dir, filename)
+            if os.path.exists(dest):
+                stem, extension = os.path.splitext(filename)
+                dest = os.path.join(upload_dir, f"{stem}-{index}{extension}")
+            file_bytes = 0
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = await f.read(UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    file_bytes += len(chunk)
+                    aggregate_bytes += len(chunk)
+                    if file_bytes > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, f"File too large: {filename} (max {MAX_UPLOAD_BYTES} bytes)")
+                    if aggregate_bytes > MAX_AGGREGATE_UPLOAD_BYTES:
+                        raise HTTPException(413, f"Total upload too large (max {MAX_AGGREGATE_UPLOAD_BYTES} bytes)")
+                    out.write(chunk)
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
 
     uploaded = [os.path.join(upload_dir, n) for n in os.listdir(upload_dir)]
+    if not uploaded:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise HTTPException(400, "At least one EVTX file is required")
     evtx_path = uploaded[0] if len(uploaded) == 1 else upload_dir
 
     investigation_request = InvestigationRequest(
@@ -2692,9 +3553,11 @@ async def start_investigation(
         enable_sigma=enable_sigma,
         request_id=request_id,
         requested_by=actor["username"],
+        acquisition_method=acquisition_method,
+        collection_manifest=manifest,
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(evtx_path, False, "")
     create_job(job_id, case_name=resolved_name, upload_path=upload_dir)
     record_audit_event(
@@ -2716,8 +3579,12 @@ async def start_investigation(
             "enable_sigma": bool(enable_sigma),
         },
     )
-    thread = Thread(target=_investigate_worker, args=(job_id, investigation_request, upload_dir), daemon=True)
-    thread.start()
+    try:
+        _submit_investigation_job(job_id, investigation_request, upload_dir)
+    except HTTPException:
+        delete_job(job_id)
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
 
     return {"job_id": job_id, "case_name": resolved_name, "status": "queued"}
 
@@ -2734,12 +3601,16 @@ async def start_investigation_from_path(
     evtx_path: str = Query(..., description="Local path to EVTX file or directory"),
     case_name: Optional[str] = Query(None),
     enable_sigma: bool = Query(False),
+    acquisition_method: str = Query("portable_collector"),
+    collection_manifest: Optional[str] = Query(None),
 ):
     """Start investigation using a local file path (no upload needed)."""
     actor = _require_user(request, ("analyst", "admin"))
     request_id = _request_id_for_log(request)
     evtx_path = _validate_evtx_path(evtx_path)
     case_name = _validate_case_name(case_name)
+    acquisition_method = _validate_acquisition_method(acquisition_method, default="portable_collector")
+    manifest = _parse_collection_manifest(collection_manifest, acquisition_method)
 
     job_id = uuid.uuid4().hex[:12]
 
@@ -2751,9 +3622,11 @@ async def start_investigation_from_path(
         enable_sigma=enable_sigma,
         request_id=request_id,
         requested_by=actor["username"],
+        acquisition_method=acquisition_method,
+        collection_manifest=manifest,
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(evtx_path, False, "")
     create_job(job_id, case_name=resolved_name)
     record_audit_event(
@@ -2775,8 +3648,11 @@ async def start_investigation_from_path(
             "enable_sigma": bool(enable_sigma),
         },
     )
-    thread = Thread(target=_investigate_worker, args=(job_id, investigation_request, None), daemon=True)
-    thread.start()
+    try:
+        _submit_investigation_job(job_id, investigation_request, None)
+    except HTTPException:
+        delete_job(job_id)
+        raise
 
     return {"job_id": job_id, "case_name": resolved_name, "status": "queued"}
 
@@ -2797,6 +3673,8 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
 
     case_name = _validate_case_name(body.case_name)
     channels = _validate_live_channels(body.channels)
+    acquisition_method = _validate_acquisition_method(body.acquisition_method, default="local_live")
+    manifest = _parse_collection_manifest(body.collection_manifest, acquisition_method)
     since_minutes = int(body.since_minutes or 30)
     if since_minutes < 1 or since_minutes > 24 * 60:
         raise HTTPException(400, "Live lookback must be between 1 and 1440 minutes")
@@ -2812,9 +3690,12 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
         since_minutes=since_minutes,
         request_id=request_id,
         requested_by=actor["username"],
+        acquisition_method=acquisition_method,
+        collection_manifest=manifest,
+        collect_live_artifacts=bool(body.collect_artifacts),
     )
 
-    from triage_engine.case_utils import auto_case_name as _auto_name
+    from corrobora.case_utils import auto_case_name as _auto_name
     resolved_name = case_name or _auto_name(None, True, ",".join(channels))
     create_job(job_id, case_name=resolved_name)
     record_audit_event(
@@ -2842,8 +3723,11 @@ async def start_live_investigation(request: Request, body: LiveInvestigateReques
             "enable_sigma": bool(body.enable_sigma),
         },
     )
-    thread = Thread(target=_investigate_worker, args=(job_id, live_request, None), daemon=True)
-    thread.start()
+    try:
+        _submit_investigation_job(job_id, live_request, None)
+    except HTTPException:
+        delete_job(job_id)
+        raise
 
     return {
         "job_id": job_id,
@@ -2888,6 +3772,202 @@ async def live_health(request: Request):
     """Return current host readiness for live event-channel investigations."""
     _require_user(request, ("viewer", "analyst", "admin"))
     return _collect_live_health()
+
+
+@app.post(
+    "/api/live/elevate",
+    tags=["Investigate"],
+    summary="Request Elevated Local Live Collection",
+    description="Request a UAC-approved elevated localhost session for protected Windows event logs.",
+    response_model=LiveElevationResponse,
+)
+async def request_live_elevation(request: Request):
+    """Start a separate elevated localhost server after an authenticated request.
+
+    Never accept a remote request here, even if an administrator deliberately
+    changes the primary server bind configuration. The original normal-user
+    server keeps running, so declining UAC has no impact on EVTX upload use.
+    """
+    actor = _require_user(request, ("analyst", "admin"))
+    if os.name != "nt":
+        raise HTTPException(400, "Administrator elevation is only available on Windows")
+    if not _is_loopback_client(request):
+        raise HTTPException(403, "Administrator elevation can only be requested from the local dashboard")
+    if SERVER_HOST not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(409, "Administrator elevation is disabled when the server is not bound to localhost")
+    if _is_windows_admin():
+        return LiveElevationResponse(
+            elevation_requested=False,
+            already_elevated=True,
+            message="This Corrobora session already has administrator permission.",
+        )
+
+    port = _find_available_loopback_port()
+    try:
+        redirect_url = _launch_elevated_local_server(port)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(500, f"Could not request administrator permission: {exc}")
+
+    record_audit_event(
+        actor_username=actor["username"],
+        action="request_live_elevation",
+        target_username="localhost",
+        details={"redirect_url": redirect_url},
+    )
+    return LiveElevationResponse(
+        elevation_requested=True,
+        redirect_url=redirect_url,
+        message="Windows will request administrator permission for a separate local Corrobora session.",
+    )
+
+
+@app.get(
+    "/api/quick/session",
+    tags=["Quick Check"],
+    summary="Create Local Quick Check Session",
+    response_model=QuickCheckSessionResponse,
+)
+async def create_quick_check_session(request: Request):
+    """Issue a short-lived capability token only to the loopback dashboard."""
+    token = _issue_quick_check_token(request)
+    return QuickCheckSessionResponse(token=token, expires_in_seconds=QUICK_CHECK_SESSION_TTL_SECONDS)
+
+
+@app.get(
+    "/api/quick/live/health",
+    tags=["Quick Check"],
+    summary="Quick Check Live Collection Readiness",
+    response_model=LiveHealthResponse,
+)
+async def quick_check_live_health(request: Request):
+    _require_quick_check_token(request)
+    return _collect_live_health()
+
+
+@app.post(
+    "/api/quick/live/elevate",
+    tags=["Quick Check"],
+    summary="Request Quick Check Administrator Permission",
+    response_model=LiveElevationResponse,
+)
+async def quick_check_request_elevation(request: Request):
+    _require_quick_check_token(request)
+    if os.name != "nt":
+        raise HTTPException(400, "Administrator elevation is only available on Windows")
+    if SERVER_HOST not in {"127.0.0.1", "localhost", "::1"}:
+        raise HTTPException(409, "Administrator elevation is disabled when the server is not bound to localhost")
+    if _is_windows_admin():
+        return LiveElevationResponse(
+            elevation_requested=False,
+            already_elevated=True,
+            message="This Corrobora session already has administrator permission.",
+        )
+    port = _find_available_loopback_port()
+    try:
+        redirect_url = _launch_elevated_local_server(port)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(500, f"Could not request administrator permission: {exc}")
+    record_audit_event(
+        actor_username="quick-check",
+        action="request_quick_check_elevation",
+        target_username="localhost",
+        details={"redirect_url": redirect_url},
+    )
+    return LiveElevationResponse(
+        elevation_requested=True,
+        redirect_url=redirect_url,
+        message="Windows will request administrator permission for a separate local Corrobora session.",
+    )
+
+
+@app.post(
+    "/api/quick/investigate/live",
+    tags=["Quick Check"],
+    summary="Start Guided Quick Check",
+    response_model=LiveInvestigationQueuedResponse,
+)
+async def start_quick_check_live(request: Request):
+    token = _require_quick_check_token(request)
+    return _queue_quick_check_live(request, token)
+
+
+@app.get(
+    "/api/quick/jobs/{job_id}",
+    tags=["Quick Check"],
+    summary="Get Guided Quick Check Status",
+    response_model=JobResponse,
+)
+async def get_quick_check_job(job_id: str, request: Request):
+    token = _require_quick_check_token(request)
+    _quick_check_job_for_token(job_id, token)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Quick Check job not found")
+    job.update(_job_case_availability(job.get("case_name", "")))
+    return job
+
+
+@app.get(
+    "/api/quick/cases/{case_name}",
+    tags=["Quick Check"],
+    summary="Get Guided Quick Check Result",
+    response_model=QuickCheckCaseResponse,
+)
+async def get_quick_check_case(case_name: str, request: Request):
+    token = _require_quick_check_token(request)
+    matching = False
+    with _QUICK_CHECK_LOCK:
+        for record in _QUICK_CHECK_JOBS.values():
+            if record.get("case_name") == case_name and hmac.compare_digest(record.get("token", ""), token):
+                matching = True
+                break
+    if not matching:
+        raise HTTPException(404, "Quick Check case not found")
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+        with open(os.path.join(case_path, "findings.json"), "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        raise HTTPException(404, "Quick Check results are not available yet")
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(500, "Quick Check results could not be read")
+    case_data = payload.get("case", {}) if isinstance(payload, dict) else {}
+    return QuickCheckCaseResponse(case_name=case_name, triage_disposition=dict(case_data.get("triage_disposition") or {}))
+
+
+@app.post(
+    "/api/quick/cases/{case_name}/bundle",
+    tags=["Quick Check"],
+    summary="Export Guided Quick Check Bundle",
+)
+async def export_quick_check_bundle(case_name: str, request: Request):
+    token = _require_quick_check_token(request)
+    matching = False
+    with _QUICK_CHECK_LOCK:
+        for record in _QUICK_CHECK_JOBS.values():
+            if record.get("case_name") == case_name and hmac.compare_digest(record.get("token", ""), token):
+                matching = True
+                break
+    if not matching:
+        raise HTTPException(404, "Quick Check case not found")
+    try:
+        case_path = resolve_case_path(CASES_ROOT, case_name)
+    except FileNotFoundError:
+        raise HTTPException(404, "Quick Check results are not available yet")
+    export_dir = os.path.join(DATA_ROOT, "exports")
+    os.makedirs(export_dir, exist_ok=True)
+    output_path = os.path.join(export_dir, f"triage-{os.path.basename(case_path)}-{uuid.uuid4().hex[:10]}.zip")
+    try:
+        export_case_bundle(case_path, output_path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, f"Quick Check export failed: {exc}")
+    filename = _safe_download_filename(f"triage-{os.path.basename(case_path)}-bundle", "zip")
+    return FileResponse(
+        output_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(lambda: os.path.exists(output_path) and os.remove(output_path)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3036,14 +4116,14 @@ async def get_finding_review_endpoint(case_name: str, finding_id: str, request: 
     """Fetch review state, notes, and history for a finding."""
     user = _require_user(request, ("viewer", "analyst", "admin"))
     resolved_case = os.path.basename(_require_case(case_name))
-    review = get_finding_review(case_name, finding_id)
+    review = get_finding_review(resolved_case, finding_id)
     _audit_case_access(user, case_name=resolved_case, endpoint="/api/cases/{case_name}/findings/{finding_id}/review")
     if not review:
-        return {"case_name": case_name, "finding_id": finding_id, "status": "Open",
+        return {"case_name": resolved_case, "finding_id": finding_id, "status": "Open",
                 "disposition": "", "owner": "", "priority": "",
                 "recommended_tuning_action": "", "notes": [], "history": []}
-    review["notes"] = get_notes(case_name, "finding", finding_id)
-    review["history"] = get_history(case_name, "finding", finding_id)
+    review["notes"] = get_notes(resolved_case, "finding", finding_id)
+    review["history"] = get_history(resolved_case, "finding", finding_id)
     return review
 
 
@@ -3058,14 +4138,14 @@ async def get_incident_review_endpoint(case_name: str, incident_id: str, request
     """Fetch review state, notes, and history for an incident."""
     user = _require_user(request, ("viewer", "analyst", "admin"))
     resolved_case = os.path.basename(_require_case(case_name))
-    review = get_incident_review(case_name, incident_id)
+    review = get_incident_review(resolved_case, incident_id)
     _audit_case_access(user, case_name=resolved_case, endpoint="/api/cases/{case_name}/incidents/{incident_id}/review")
     if not review:
-        return {"case_name": case_name, "incident_id": incident_id, "status": "Open",
+        return {"case_name": resolved_case, "incident_id": incident_id, "status": "Open",
                 "disposition": "", "owner": "", "priority": "",
                 "recommended_tuning_action": "", "notes": [], "history": []}
-    review["notes"] = get_notes(case_name, "incident", incident_id)
-    review["history"] = get_history(case_name, "incident", incident_id)
+    review["notes"] = get_notes(resolved_case, "incident", incident_id)
+    review["history"] = get_history(resolved_case, "incident", incident_id)
     return review
 
 
@@ -3084,9 +4164,11 @@ async def update_finding_review_endpoint(case_name: str, finding_id: str, body: 
         raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")
     if body.disposition and body.disposition not in VALID_DISPOSITIONS:
         raise HTTPException(400, f"Invalid disposition. Must be one of: {', '.join(VALID_DISPOSITIONS)}")
-    changed_by = body.changed_by or user["username"]
+    # Attribution is security-sensitive audit data. Never trust a caller-
+    # supplied display value when an authenticated identity is available.
+    changed_by = user["username"]
     review = upsert_finding_review(
-        case_name, finding_id,
+        resolved_case, finding_id,
         status=body.status, disposition=body.disposition,
         owner=body.owner, priority=body.priority,
         recommended_tuning_action=body.recommended_tuning_action,
@@ -3125,9 +4207,9 @@ async def update_incident_review_endpoint(case_name: str, incident_id: str, body
         raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")
     if body.disposition and body.disposition not in VALID_DISPOSITIONS:
         raise HTTPException(400, f"Invalid disposition. Must be one of: {', '.join(VALID_DISPOSITIONS)}")
-    changed_by = body.changed_by or user["username"]
+    changed_by = user["username"]
     review = upsert_incident_review(
-        case_name, incident_id,
+        resolved_case, incident_id,
         status=body.status, disposition=body.disposition,
         owner=body.owner, priority=body.priority,
         recommended_tuning_action=body.recommended_tuning_action,
@@ -3183,8 +4265,8 @@ async def add_finding_note(case_name: str, finding_id: str, body: NoteCreate, re
     resolved_case = os.path.basename(_require_case(case_name))
     if not body.content.strip():
         raise HTTPException(400, "Note content cannot be empty")
-    author = body.author or user["username"]
-    note = add_note(case_name, "finding", finding_id, body.content.strip(), author)
+    author = user["username"]
+    note = add_note(resolved_case, "finding", finding_id, body.content.strip(), author)
     record_audit_event(
         actor_username=user["username"],
         action="add_review_note",
@@ -3215,8 +4297,8 @@ async def add_incident_note(case_name: str, incident_id: str, body: NoteCreate, 
     resolved_case = os.path.basename(_require_case(case_name))
     if not body.content.strip():
         raise HTTPException(400, "Note content cannot be empty")
-    author = body.author or user["username"]
-    note = add_note(case_name, "incident", incident_id, body.content.strip(), author)
+    author = user["username"]
+    note = add_note(resolved_case, "incident", incident_id, body.content.strip(), author)
     record_audit_event(
         actor_username=user["username"],
         action="add_review_note",
@@ -3512,10 +4594,17 @@ async def review_enums(request: Request):
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+# Evidence explorer and evidence-link review routes live in their own module.
+app.include_router(build_forensics_router(
+    require_user=_require_user, require_case=_require_case, audit_case_access=_audit_case_access,
+    record_audit_event=record_audit_event, redact=apply_demo_redaction_data,
+))
+
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     import argparse
 
-    parser = argparse.ArgumentParser(description="Triage Engine API Server")
+    parser = argparse.ArgumentParser(description="Corrobora API Server")
     parser.add_argument("--host", default=SERVER_HOST, help=f"Bind address (default: {SERVER_HOST})")
     parser.add_argument("--port", type=int, default=SERVER_PORT, help=f"Port (default: {SERVER_PORT})")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
@@ -3539,8 +4628,10 @@ if __name__ == "__main__":
         },
     )
 
+    # Pass the loaded ASGI object directly so frozen PyInstaller builds do not
+    # depend on importing a source module named ``server`` from disk.
     uvicorn.run(
-        "server:app",
+        app,
         host=args.host,
         port=args.port,
         reload=args.reload,

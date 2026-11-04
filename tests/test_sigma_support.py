@@ -4,9 +4,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from triage_engine.adapters import alerts_to_signals_findings
-from triage_engine.sigma_loader import load_rules
-from triage_engine.sigma_runner import evaluate_rules
+from corrobora.adapters import alerts_to_signals_findings
+from corrobora.sigma_loader import load_rules
+from corrobora.sigma_runner import evaluate_rules
 
 from tests.test_regressions import make_event
 

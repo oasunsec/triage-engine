@@ -1,7 +1,7 @@
 import json, shutil, tempfile, unittest
 from pathlib import Path
 from tests.test_regressions import ROOT
-from triage_engine.cli import main as cli_main
+from corrobora.cli import main as cli_main
 SAMPLE_CACHE_DIR = ROOT / "sample_cache"
 SAMPLES = []
 SAMPLES.append(("hayabusa_mshta.evtx", "MSHTA HTA Execution"))

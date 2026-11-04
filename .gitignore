@@ -15,10 +15,17 @@ build/
 cases/
 data/
 
+# Consolidated local EVTX samples and standalone utility generated output.
+/tools/log-parser-v4/samples/
+/tools/log-parser-v4/artifacts/
+
 # Server uploads — temporary
 uploads/
 
 # Dev/test temporaries
+/runtime/
+.tmp/
+output/
 .playwright-cli/
 triage-regression-*/
 triage-lsass-*/
@@ -29,6 +36,7 @@ sample_cache/
 scratch_*.txt
 _patch_test.txt
 can_write_probe.txt
+/audit-artifacts/production_readiness.json
 production_readiness.json
 competitive_eval.json
 competitive_eval_wave2_probe.json
@@ -56,3 +64,12 @@ Thumbs.db
 !.env.example
 .venv/
 venv/
+
+# Stray local test/recovery folders
+triage-api-test-*/
+scripts/recovered-loose-*/
+# Generated audit output: keep the Markdown summaries, not raw dumps or evidence
+/audit-cases/
+/artifacts/
+/audit-artifacts/*.json
+/audit-artifacts/imported/

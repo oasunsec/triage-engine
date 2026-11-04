@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "triage-engine"
+name = "corrobora"
 version = "3.0.0"
 description = "Windows endpoint investigation platform for EVTX triage, detection, correlation, analyst review, and HTML case reporting."
 readme = "README.md"
@@ -16,10 +16,15 @@ dependencies = [
 live = ["pywin32>=306"]
 sigma = ["PyYAML>=6.0"]
 server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7"]
-test = ["httpx>=0.27,<1"]
+test = ["httpx>=0.27,<1", "pytest>=8,<10"]
 
 [project.scripts]
-triage = "triage_engine.cli:main"
+corrobora = "corrobora.cli:main"
+triage = "corrobora.cli:main"  # old command name, kept for existing scripts
 
 [tool.setuptools]
-packages = ["triage_engine", "models", "parser", "detectors", "correlation", "reporting"]
+packages = ["corrobora", "models", "parser", "detectors", "correlation", "reporting"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".git", ".tmp", "runtime", "cases", "data", "uploads", "output", "repo_cache", "audit-cases", "audit-artifacts", "artifacts", "triage-api-test-*", "node_modules"]

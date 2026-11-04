@@ -25,6 +25,17 @@ BENIGN_SERVICE_PATH_MARKERS = (
     "\\windowsazure\\packages\\waappagent.exe",
     "\\system32\\drivers\\mlx5.sys",
 )
+# Defender platform updates reinstall these services from a versioned folder
+# that only Defender and TrustedInstaller can write. Name and binary must pair
+# exactly; this checks the path, not the signature.
+DEFENDER_PLATFORM_SERVICES = {
+    "microsoft defender core service": "mpdefendercoreservice.exe",
+    "microsoft defender antivirus service": "msmpeng.exe",
+    "microsoft defender antivirus network inspection service": "nissrv.exe",
+}
+DEFENDER_PLATFORM_PATH_RE = re.compile(
+    r'"?[a-z]:\\programdata\\microsoft\\windows defender\\platform\\\d+(?:\.\d+){3}-\d+\\([a-z]+\.exe)"?'
+)
 SUSPICIOUS_TASK_MARKERS = (
     "powershell",
     "pwsh",
@@ -358,6 +369,7 @@ def detect(events: List[NormalizedEvent]) -> List[Alert]:
     alerts.extend(_service_imagepath_command_abuse(events))
     alerts.extend(_service_creation_command_abuse(events))
     alerts.extend(_service_imagepath_registry_hijack(events))
+    alerts.extend(_dns_server_level_plugin_dll_hijack(events))
     alerts.extend(_service_payload_abuse(events))
     alerts.extend(_bits_client_operational_job(events))
     alerts.extend(_bits_notify_sequence(events))
@@ -4812,6 +4824,9 @@ def _check(
         svc_file_l = svc_file.lower()
         if svc_l in BENIGN_SERVICE_NAMES or any(marker in svc_file_l for marker in BENIGN_SERVICE_PATH_MARKERS):
             return alerts
+        defender_path = DEFENDER_PLATFORM_PATH_RE.fullmatch(svc_file_l.strip())
+        if defender_path and DEFENDER_PLATFORM_SERVICES.get(svc_l) == defender_path.group(1):
+            return alerts
         is_system = "system" in svc_acct.lower()
         alerts.append(Alert(
             rule_name="Service Installed", severity="critical" if is_system else "high",
@@ -4870,6 +4885,38 @@ def _check(
                     evidence={"key": target, "value": value[:300], "evidence_strength": "high"},
                 ))
                 break
+
+        startup_folder_keys = (
+            "\\explorer\\user shell folders\\startup",
+            "\\explorer\\shell folders\\startup",
+        )
+        if target.endswith(startup_folder_keys):
+            value = (ed.get("Details", "") or ed.get("NewValue", "")).strip()
+            normalized_value = value.lower().replace("/", "\\")
+            default_markers = (
+                "%appdata%\\microsoft\\windows\\start menu\\programs\\startup",
+                "\\appdata\\roaming\\microsoft\\windows\\start menu\\programs\\startup",
+            )
+            if value and not any(marker in normalized_value for marker in default_markers):
+                alerts.append(Alert(
+                    rule_name="Startup Folder Path Redirected",
+                    severity="high",
+                    mitre_tactic="Persistence",
+                    mitre_technique="T1547.001",
+                    description=f"The per-user Startup folder was redirected on {ev.computer} to {value[:180]}",
+                    explanation="Changing the Explorer Startup-folder registry path can make a different directory execute content at user logon. Administrative customization is possible, so the redirected path and modifying process must be validated.",
+                    confidence="medium",
+                    investigate_next="Confirm whether the redirected Startup path is approved, identify the modifying process and user, and inspect every executable or script in the new directory for subsequent logon execution.",
+                    event=ev,
+                    registry_key=target,
+                    evidence={
+                        "registry_key": target,
+                        "redirected_startup_path": value,
+                        "modifying_process": ev.process_name,
+                        "evidence_strength": "medium",
+                        "known_ambiguity": "Shell-folder redirection may be deployed by policy or profile-management software.",
+                    },
+                ))
 
         if "\\command processor\\autorun" in target:
             value = ed.get("Details", "") or ed.get("NewValue", "")
@@ -4984,4 +5031,64 @@ def _check(
                 event=ev, evidence={"member": member, "group": group, "changed_by": changed_by, "evidence_strength": "high"},
             ))
 
+    return alerts
+
+
+def _dns_server_level_plugin_dll_hijack(events):
+    """Detect dnscmd /config /serverlevelplugindll pointing at non-system DLL (T1574.011 / T1505.002)."""
+    alerts = []
+    seen = set()
+    dnscmd_re = re.compile(
+        r"\bdnscmd(?:\.exe)?\b.*?/config\b.*?/serverlevelplugindll\b\s+(.+?)\s*$",
+        re.IGNORECASE,
+    )
+    legit_dir_markers = (
+        "\\windows\\system32\\dns",
+        "%systemroot%\\system32\\dns",
+        "system32\\dns",
+    )
+    for ev in events:
+        if ev.event_id not in (4688, 1, 4104):
+            continue
+        command = (ev.command_line or ev.command_line_value or "") + " " + (ev.event_data.get("ScriptBlockText", "") or "")
+        match = dnscmd_re.search(command or "")
+        if not match:
+            continue
+        dll_value = (match.group(1) or "").strip()
+        dll_value = dll_value.strip("\"'")
+        dll_lower = dll_value.lower().replace("\\\\", "\\")
+        key = (ev.computer or "unknown", dll_lower)
+        if key in seen:
+            continue
+        seen.add(key)
+        suspicious = not any(marker in dll_lower for marker in legit_dir_markers)
+        if not suspicious:
+            continue
+        actor = _extract_process_user(ev) or "unknown"
+        alerts.append(
+            Alert(
+                rule_name="DNS ServerLevelPluginDll Hijack",
+                severity="critical",
+                mitre_tactic="Persistence",
+                mitre_technique="T1574.011",
+                description=f"{actor} configured DNS ServerLevelPluginDll to load {dll_value} on {ev.computer}",
+                explanation=(
+                    "Setting the DNS ServerLevelPluginDll registry value to an attacker-controlled DLL makes the DNS service load it, "
+                    "providing persistence and code execution in a privileged service context (mimikatz-style attacks)."
+                ),
+                confidence="high",
+                investigate_next=(
+                    "Restore the DNS plugin DLL value, confirm whether the DNS service reloaded, and inspect the loaded DLL for persistence or credential theft."
+                ),
+                event=ev,
+                user=actor,
+                process=ev.process_name,
+                evidence={
+                    "command_line": (command or "")[:400],
+                    "dll_path": dll_value,
+                    "actor_user": actor,
+                    "evidence_strength": "high",
+                },
+            )
+        )
     return alerts
