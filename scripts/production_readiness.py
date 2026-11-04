@@ -169,8 +169,7 @@ def main(argv: List[str] | None = None) -> int:
         # The report is the record; the tail shows which test failed without opening it.
         output = (validation["stdout"] + validation["stderr"]).strip().splitlines()
         print("Validation output (last 40 lines):")
-        print("
-".join(output[-40:]))
+        print("\n".join(output[-40:]))
     return 0 if validation["passed"] and (not args.strict or status == "production_candidate") else 1
 
 

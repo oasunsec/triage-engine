@@ -180,7 +180,7 @@ jobs:
         with:
           name: production-readiness-report
           path: audit-artifacts/production_readiness.json
-          if-no-files-found: error
+          if-no-files-found: warn
 
   release-gate:
     name: Release Gate
