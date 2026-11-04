@@ -26,7 +26,7 @@ TEST_MODULES = [
     "tests.test_api",
     "tests.test_backend_hardening",
     "tests.test_product_workflow",
-    "tests.test_msp_api",
+    "tests.test_collector_ingest",
     "tests.test_workspace_delivery",
     "tests.test_parser_availability",
     "tests.test_packaging_assets",
